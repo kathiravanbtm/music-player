@@ -4,7 +4,7 @@ import { doc, updateDoc, increment } from 'firebase/firestore';
 import { db } from '../config/firebase.js';
 import { AntDesign } from '@expo/vector-icons';
 
-const VoteButton = ({ songId, roomId, currentVotes, type }) => {
+const VoteButton = ({ songId, roomId, currentVotes, type, onLocalVote, isLocalRoom }) => {
   const [isVoting, setIsVoting] = useState(false);
 
   const handleVote = async () => {
@@ -13,8 +13,6 @@ const VoteButton = ({ songId, roomId, currentVotes, type }) => {
     setIsVoting(true);
     
     try {
-      const songRef = doc(db, 'rooms', roomId, 'songs', songId);
-      
       // Increment or decrement the vote count
       const voteChange = type === 'up' ? 1 : -1;
       
@@ -24,13 +22,30 @@ const VoteButton = ({ songId, roomId, currentVotes, type }) => {
         return;
       }
       
-      await updateDoc(songRef, {
-        votes: increment(voteChange)
-      });
+      // If this is a local room or we have a local vote handler, use that
+      if (isLocalRoom || onLocalVote) {
+        if (onLocalVote) {
+          onLocalVote(songId, voteChange);
+        }
+        setIsVoting(false);
+        return;
+      }
       
+      // Otherwise try to update Firebase
+      try {
+        const songRef = doc(db, 'rooms', roomId, 'songs', songId);
+        await updateDoc(songRef, {
+          votes: increment(voteChange)
+        });
+      } catch (fbError) {
+        console.log('Firebase vote error:', fbError);
+        // If Firebase fails, call the local vote handler if available
+        if (onLocalVote) {
+          onLocalVote(songId, voteChange);
+        }
+      }
     } catch (error) {
       console.error('Error voting:', error);
-      Alert.alert('Error', 'Failed to register vote. Please try again.');
     } finally {
       setIsVoting(false);
     }

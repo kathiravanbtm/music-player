@@ -8,6 +8,11 @@ const CreateRoomScreen = ({ navigation }) => {
   const [userName, setUserName] = useState('');
   const [isLoading, setIsLoading] = useState(false);
 
+  // Generate a random 6-digit room ID
+  const generateRoomId = () => {
+    return Math.floor(100000 + Math.random() * 900000).toString();
+  };
+
   const createRoom = async () => {
     if (!roomName.trim() || !userName.trim()) {
       Alert.alert('Error', 'Please enter both room name and your name');
@@ -16,14 +21,18 @@ const CreateRoomScreen = ({ navigation }) => {
 
     setIsLoading(true);
     try {
-      // Create a new room in Firestore
+      // Generate a numeric room ID
+      const numericRoomId = generateRoomId();
+      
+      // Create a new room in Firestore using the numeric ID
       const roomRef = await addDoc(collection(db, 'rooms'), {
         name: roomName,
         createdBy: userName,
         createdAt: serverTimestamp(),
         isActive: true,
         currentSong: null,
-        songs: [] // Will store song IDs initially
+        numericId: numericRoomId, // Add the numeric ID field
+        songs: []
       });
 
       // Navigate to the room screen
@@ -32,7 +41,8 @@ const CreateRoomScreen = ({ navigation }) => {
         roomId: roomRef.id, 
         roomName: roomName,
         userName: userName,
-        isHost: true 
+        isHost: true,
+        numericRoomId: numericRoomId // Pass the numeric ID to the room
       });
     } catch (error) {
       setIsLoading(false);

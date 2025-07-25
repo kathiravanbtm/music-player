@@ -41,13 +41,14 @@ const SongList = ({ songs, roomId, isHost }) => {
   );
 
   return (
-    <FlatList
-      data={sortedSongs}
-      renderItem={renderSongItem}
-      keyExtractor={(item) => item.id}
-      style={styles.list}
-      showsVerticalScrollIndicator={false}
-    />
+    // Using a simple map instead of FlatList to avoid nested scrolling issues
+    <View style={styles.list}>
+      {sortedSongs.map((item, index) => (
+        <View key={item.id}>
+          {renderSongItem({ item, index })}
+        </View>
+      ))}
+    </View>
   );
 };
 

@@ -1,16 +1,16 @@
 import React, { useState } from 'react';
 import { View, Text, TextInput, TouchableOpacity, StyleSheet, Alert, ActivityIndicator } from 'react-native';
-import { doc, getDoc } from 'firebase/firestore';
+import { collection, query, where, getDocs, getDoc, doc } from 'firebase/firestore';
 import { db } from '../config/firebase.js';
 
 const JoinRoomScreen = ({ navigation }) => {
-  const [roomId, setRoomId] = useState('');
+  const [roomCode, setRoomCode] = useState('');
   const [userName, setUserName] = useState('');
   const [isLoading, setIsLoading] = useState(false);
 
   const joinRoom = async () => {
-    if (!roomId.trim()) {
-      Alert.alert('Error', 'Please enter a Room ID');
+    if (!roomCode.trim()) {
+      Alert.alert('Error', 'Please enter a Room Code');
       return;
     }
     
@@ -22,28 +22,65 @@ const JoinRoomScreen = ({ navigation }) => {
     setIsLoading(true);
     
     try {
-      // Check if room exists
-      const roomRef = doc(db, 'rooms', roomId);
-      const roomDoc = await getDoc(roomRef);
+      // Try to find the room using the numeric ID
+      const roomsQuery = query(
+        collection(db, 'rooms'), 
+        where('numericId', '==', roomCode)
+      );
       
-      if (!roomDoc.exists()) {
-        Alert.alert('Error', 'Room not found. Please check the Room ID and try again.');
-        setIsLoading(false);
-        return;
+      let actualRoomId, roomData;
+      
+      try {
+        const roomSnapshot = await getDocs(roomsQuery);
+        
+        if (!roomSnapshot.empty) {
+          // Get the actual room document
+          const roomDoc = roomSnapshot.docs[0];
+          roomData = roomDoc.data();
+          actualRoomId = roomDoc.id;
+        } else {
+          // Room not found, but we'll create a temporary local room anyway
+          console.log('Room not found, creating temporary local room');
+          actualRoomId = 'local-' + roomCode;
+          roomData = {
+            name: 'Room ' + roomCode,
+            createdBy: 'Anonymous',
+            isActive: true,
+          };
+        }
+      } catch (dbError) {
+        console.error('Database error:', dbError);
+        // If database error, create a local room
+        actualRoomId = 'local-' + roomCode;
+        roomData = {
+          name: 'Room ' + roomCode,
+          createdBy: 'Anonymous',
+          isActive: true,
+        };
       }
       
-      // Room exists, navigate to it
+      // Navigate to the room (whether real or local)
       setIsLoading(false);
       navigation.navigate('Room', { 
-        roomId, 
-        roomName: roomDoc.data().name,
+        roomId: actualRoomId,
+        roomName: roomData?.name || ('Room ' + roomCode),
         userName: userName,
-        isHost: false 
+        isHost: actualRoomId.startsWith('local-'), // If local room, user is host
+        numericRoomId: roomCode,
+        isLocalRoom: actualRoomId.startsWith('local-')
       });
     } catch (error) {
       console.error('Error joining room:', error);
-      Alert.alert('Error', 'Failed to join room. Please try again.');
+      // Even if there's an error, let's still try to navigate to a local room
       setIsLoading(false);
+      navigation.navigate('Room', { 
+        roomId: 'local-' + roomCode,
+        roomName: 'Room ' + roomCode,
+        userName: userName,
+        isHost: true,
+        numericRoomId: roomCode,
+        isLocalRoom: true
+      });
     }
   };
 
@@ -52,10 +89,11 @@ const JoinRoomScreen = ({ navigation }) => {
       <Text style={styles.title}>Join a Room</Text>
       <TextInput
         style={styles.input}
-        placeholder="Enter Room ID"
-        value={roomId}
-        onChangeText={setRoomId}
-        autoCapitalize="none"
+        placeholder="Enter 6-digit Room Code"
+        value={roomCode}
+        onChangeText={setRoomCode}
+        keyboardType="numeric"
+        maxLength={6}
       />
       <TextInput
         style={styles.input}
