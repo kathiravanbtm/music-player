@@ -18,10 +18,16 @@
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
         "backgroundColor": "#667eea"
-      }
+      },
+      "package": "com.baymax_hugger.crowdradio"
     },
     "web": {
       "favicon": "./assets/favicon.png"
+    },
+    "extra": {
+      "eas": {
+        "projectId": "5f1394b4-cf90-4e4a-86c2-4911b2925341"
+      }
     }
   }
 }

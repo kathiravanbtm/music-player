@@ -1,8 +1,9 @@
 import React from 'react';
-import { View, Text, StyleSheet, FlatList } from 'react-native';
-import VoteButton from './VoteButton.js';
+import { View, Text, StyleSheet, TouchableOpacity } from 'react-native';
+import { AntDesign } from '@expo/vector-icons';
+import Button from './ui/Button';
 
-const SongList = ({ songs, roomId, isHost }) => {
+const SongList = ({ songs, onVote, onRemove, currentUser, isHost }) => {
   if (!songs || songs.length === 0) {
     return (
       <View style={styles.emptyContainer}>
@@ -11,48 +12,84 @@ const SongList = ({ songs, roomId, isHost }) => {
     );
   }
 
-  const sortedSongs = [...songs].sort((a, b) => b.votes - a.votes);
+  // Sort songs by votes (descending) then by time added (ascending)
+  const sortedSongs = [...songs].sort((a, b) => {
+    if (b.votes !== a.votes) {
+      return b.votes - a.votes;
+    }
+    return new Date(a.addedAt) - new Date(b.addedAt);
+  });
 
-  const renderSongItem = ({ item, index }) => (
-    <View style={styles.songItem}>
+  const hasUserVoted = (song) => {
+    return song.voters?.includes(currentUser) || false;
+  };
+
+  const renderSongItem = (item, index) => (
+    <View key={item.id} style={styles.songItem}>
       <View style={styles.songInfo}>
         <Text style={styles.position}>#{index + 1}</Text>
         <View style={styles.songDetails}>
-          <Text style={styles.songTitle}>{item.title}</Text>
+          <Text style={styles.songTitle} numberOfLines={2}>{item.title}</Text>
           <Text style={styles.addedBy}>Added by: {item.addedBy}</Text>
         </View>
       </View>
+      
       <View style={styles.songActions}>
-        <VoteButton 
-          songId={item.id} 
-          roomId={roomId} 
-          currentVotes={item.votes}
-          type="up"
-        />
-        <Text style={styles.voteCount}>{item.votes}</Text>
-        <VoteButton 
-          songId={item.id} 
-          roomId={roomId} 
-          currentVotes={item.votes}
-          type="down"
-        />
+        {/* Vote buttons */}
+        <TouchableOpacity
+          style={[
+            styles.voteButton,
+            hasUserVoted(item) && styles.votedButton
+          ]}
+          onPress={() => onVote(item.id, 'up')}
+        >
+          <AntDesign 
+            name="up" 
+            size={16} 
+            color={hasUserVoted(item) ? '#fff' : '#3498db'} 
+          />
+        </TouchableOpacity>
+        
+        <Text style={styles.voteCount}>{item.votes || 0}</Text>
+        
+        <TouchableOpacity
+          style={[
+            styles.voteButton,
+            hasUserVoted(item) && styles.votedButton
+          ]}
+          onPress={() => onVote(item.id, 'down')}
+        >
+          <AntDesign 
+            name="down" 
+            size={16} 
+            color={hasUserVoted(item) ? '#fff' : '#e74c3c'} 
+          />
+        </TouchableOpacity>
+
+        {/* Remove button for host */}
+        {isHost && onRemove && (
+          <TouchableOpacity
+            style={styles.removeButton}
+            onPress={() => onRemove(item.id)}
+          >
+            <AntDesign name="delete" size={16} color="#e74c3c" />
+          </TouchableOpacity>
+        )}
       </View>
     </View>
   );
 
   return (
-    // Using a simple map instead of FlatList to avoid nested scrolling issues
-    <View style={styles.list}>
-      {sortedSongs.map((item, index) => (
-        <View key={item.id}>
-          {renderSongItem({ item, index })}
-        </View>
-      ))}
+    <View style={styles.container}>
+      <Text style={styles.queueTitle}>Song Queue ({sortedSongs.length})</Text>
+      <View style={styles.list}>
+        {sortedSongs.map((item, index) => renderSongItem(item, index))}
+      </View>
     </View>
   );
 };
 
-const styles = StyleSheet.create({
+  const styles = StyleSheet.create({
   emptyContainer: {
     padding: 20,
     alignItems: 'center',

@@ -1,3 +1,4 @@
+// filepath: /home/baymax/Documents/projects/music-player/crowdradio/src/components/YouTubePlayer.js
 import React, { useState, useEffect } from 'react';
 import { View, StyleSheet, Text, TouchableOpacity, ActivityIndicator } from 'react-native';
 import { WebView } from 'react-native-webview';
@@ -47,17 +48,18 @@ const YouTubePlayer = ({ videoUrl, isHost, onSongEnd }) => {
     );
   }
 
-  // Simple, minimal HTML for reliable audio playback
-  // This uses multiple playback approaches for better compatibility
-  const simpleAudioHTML = `
+  // Enhanced HTML for better audio playback with improved controls
+  const enhancedAudioHTML = `
     <!DOCTYPE html>
     <html>
       <head>
         <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+        <meta http-equiv="Content-Security-Policy" content="default-src * 'unsafe-inline' 'unsafe-eval' data: blob:">
+        <meta name="apple-mobile-web-app-capable" content="yes">
         <style>
           body {
             margin: 0;
-            padding: 10px;
+            padding: 8px;
             background-color: #2C3E50;
             color: white;
             font-family: system-ui, -apple-system, sans-serif;
@@ -71,39 +73,62 @@ const YouTubePlayer = ({ videoUrl, isHost, onSongEnd }) => {
           
           .audio-player {
             width: 100%;
-            max-width: 500px;
+            max-width: 400px;
             margin: 0 auto;
             text-align: center;
           }
           
           .audio-title {
-            font-size: 16px;
+            font-size: 14px;
             font-weight: bold;
-            margin: 10px 0;
+            margin: 8px 0;
             white-space: nowrap;
             overflow: hidden;
             text-overflow: ellipsis;
+            opacity: 0.9;
           }
           
           .controls {
             display: flex;
             justify-content: center;
-            gap: 15px;
-            margin: 15px 0;
+            gap: 12px;
+            margin: 12px 0;
           }
           
           .control-button {
-            width: 40px;
-            height: 40px;
+            width: 36px;
+            height: 36px;
             border-radius: 50%;
             background: #3498db;
             border: none;
             color: white;
-            font-size: 18px;
+            font-size: 16px;
             cursor: pointer;
             display: flex;
             align-items: center;
             justify-content: center;
+            transition: all 0.2s ease;
+          }
+          
+          .control-button:hover {
+            background: #2980b9;
+            transform: scale(1.05);
+          }
+          
+          .control-button:disabled {
+            background: #7f8c8d;
+            cursor: not-allowed;
+            transform: none;
+          }
+          
+          .play-button {
+            width: 44px;
+            height: 44px;
+            background: #e74c3c;
+          }
+          
+          .play-button:hover {
+            background: #c0392b;
           }
           
           .progress {
@@ -113,6 +138,7 @@ const YouTubePlayer = ({ videoUrl, isHost, onSongEnd }) => {
             border-radius: 3px;
             position: relative;
             margin: 10px 0;
+            cursor: pointer;
           }
           
           .progress-bar {
@@ -165,12 +191,16 @@ const YouTubePlayer = ({ videoUrl, isHost, onSongEnd }) => {
             100% { height: 3px; }
           }
 
-          #youtube-embed {
-            position: absolute;
+          #youtube-player {
+            position: fixed;
+            bottom: 0;
+            right: 0;
+            width: 320px;
+            height: 240px;
             opacity: 0.01;
             pointer-events: none;
-            width: 5px;
-            height: 5px;
+            z-index: -10;
+            border: none;
           }
         </style>
       </head>
@@ -182,7 +212,7 @@ const YouTubePlayer = ({ videoUrl, isHost, onSongEnd }) => {
             <!-- Bars will be added dynamically -->
           </div>
           
-          <div class="progress">
+          <div class="progress" id="progress-container">
             <div class="progress-bar" id="progress"></div>
           </div>
           
@@ -199,34 +229,30 @@ const YouTubePlayer = ({ videoUrl, isHost, onSongEnd }) => {
           <div class="status" id="status">Connecting...</div>
         </div>
         
-        <!-- Hidden container for audio -->
-        <div style="position:absolute;top:-999px;left:-999px;">
-          <div id="player-container"></div>
-        </div>
+        <!-- YouTube player container -->
+        <div id="youtube-player"></div>
         
         <script>
-          // Config
+          // Main configuration
           const videoId = "${videoId}";
           const isHost = ${isHost};
           let player = null;
-          let isPlaying = false;
+          let isPlaying = isHost;
           let isMuted = false;
           let currentTime = 0;
           let duration = 0;
           let progressInterval = null;
-          let checkEndInterval = null;
           let heartbeatInterval = null;
-          let playerType = null; // 'iframe' or 'api'
-          
-          // Create visualizer bars
+
+          // Setup visualizer bars
           function setupVisualizer() {
             const visualizer = document.getElementById('visualizer');
             visualizer.innerHTML = '';
             
-            for (let i = 0; i < 20; i++) {
+            for (let i = 0; i < 16; i++) {
               const bar = document.createElement('div');
               bar.className = 'bar';
-              bar.style.animationDelay = \`\${i * 0.05}s\`;
+              bar.style.animationDelay = \`\${i * 0.1}s\`;
               visualizer.appendChild(bar);
             }
           }
@@ -239,226 +265,15 @@ const YouTubePlayer = ({ videoUrl, isHost, onSongEnd }) => {
             return \`\${min}:\${sec}\`;
           }
           
-          // Try multiple playback approaches for better compatibility
-          function initPlayer() {
-            try {
-              // First try with simple iframe embed (most compatible)
-              createIframeEmbed();
-              
-              // Also try YT API as backup
-              loadYoutubeAPI();
-              
-              // Start heartbeat to communicate with React Native
-              heartbeatInterval = setInterval(() => {
-                window.ReactNativeWebView.postMessage('HEARTBEAT');
-              }, 5000);
-            } catch (err) {
-              console.error('Player init error:', err);
-              window.ReactNativeWebView.postMessage('INIT_ERROR:' + err.message);
-              updateStatus('Error initializing player');
-            }
-          }
-          
-          // Create direct iframe embed (simpler approach)
-          function createIframeEmbed() {
-            try {
-              // Create an iframe with autoplay
-              const container = document.getElementById('player-container');
-              container.innerHTML = \`
-                <iframe 
-                  id="youtube-embed"
-                  src="https://www.youtube.com/embed/\${videoId}?enablejsapi=1&autoplay=1&controls=0&playsinline=1&origin=\${window.location.origin}"
-                  allow="autoplay; encrypted-media" 
-                  allowfullscreen
-                ></iframe>
-              \`;
-              
-              // Mark player as ready
-              playerType = 'iframe';
-              window.ReactNativeWebView.postMessage('PLAYER_READY');
-              updateStatus(isHost ? 'Playing' : 'Ready');
-              setupVisualizer();
-              activateVisualizer(true);
-              
-              // Set up timer for progress tracking (since we can't get it from iframe)
-              startProgressSimulation();
-              
-              // Check if playback is actually happening
-              setTimeout(checkPlaybackStarted, 2000);
-              
-              // Set up check for song end
-              setupEndDetection();
-            } catch (e) {
-              window.ReactNativeWebView.postMessage('IFRAME_ERROR:' + e.toString());
-            }
-          }
-          
-          // Check if audio is actually playing
-          function checkPlaybackStarted() {
-            // No reliable way to check, so we just assume it's playing
-            window.ReactNativeWebView.postMessage('PLAYBACK_ASSUMED_STARTED');
-            isPlaying = true;
-            document.getElementById('play-pause').textContent = '❚❚';
-            activateVisualizer(true);
-          }
-          
-          // Load YouTube API as a fallback
-          function loadYoutubeAPI() {
-            window.onYouTubeIframeAPIReady = function() {
-              // Only use API if iframe embed failed
-              if (playerType !== 'iframe') {
-                initYouTubePlayer();
-              }
-            };
-            
-            const tag = document.createElement('script');
-            tag.src = 'https://www.youtube.com/iframe_api';
-            const firstScript = document.getElementsByTagName('script')[0];
-            firstScript.parentNode.insertBefore(tag, firstScript);
-          }
-          
-          // Initialize YouTube player with API
-          function initYouTubePlayer() {
-            try {
-              player = new YT.Player('youtube-embed', {
-                videoId: videoId,
-                playerVars: {
-                  autoplay: 1,
-                  controls: 0,
-                  playsinline: 1,
-                  origin: window.location.origin
-                },
-                events: {
-                  'onReady': onPlayerReady,
-                  'onStateChange': onPlayerStateChange,
-                  'onError': onPlayerError
-                }
-              });
-              playerType = 'api';
-            } catch (err) {
-              window.ReactNativeWebView.postMessage('YT_API_ERROR:' + err.toString());
-            }
-          }
-          
-          // YouTube API callbacks
-          function onPlayerReady(event) {
-            if (isHost) {
-              event.target.playVideo();
-              document.getElementById('play-pause').textContent = '❚❚';
-            }
-            window.ReactNativeWebView.postMessage('API_PLAYER_READY');
-            
-            // Try to get video title
-            try {
-              const videoData = player.getVideoData();
-              if (videoData && videoData.title) {
-                document.getElementById('title').textContent = videoData.title;
-                window.ReactNativeWebView.postMessage('TITLE:' + videoData.title);
-              }
-            } catch (e) {}
-          }
-          
-          function onPlayerStateChange(event) {
-            if (event.data === YT.PlayerState.PLAYING) {
-              isPlaying = true;
-              document.getElementById('play-pause').textContent = '❚❚';
-              activateVisualizer(true);
-              updateStatus('Playing');
-            } else if (event.data === YT.PlayerState.PAUSED) {
-              isPlaying = false;
-              document.getElementById('play-pause').textContent = '▶';
-              activateVisualizer(false);
-              updateStatus('Paused');
-            } else if (event.data === YT.PlayerState.ENDED) {
-              isPlaying = false;
-              document.getElementById('play-pause').textContent = '▶';
-              activateVisualizer(false);
-              updateStatus('Ended');
-              
-              if (isHost) {
-                window.ReactNativeWebView.postMessage('VIDEO_ENDED');
-              }
-            } else if (event.data === YT.PlayerState.BUFFERING) {
-              updateStatus('Buffering...');
-            }
-          }
-          
-          function onPlayerError(event) {
-            window.ReactNativeWebView.postMessage('YT_ERROR:' + event.data);
-            updateStatus('Playback error');
-          }
-          
-          // Toggle play/pause
-          function togglePlayback() {
-            if (playerType === 'api' && player) {
-              if (isPlaying) {
-                player.pauseVideo();
-              } else {
-                player.playVideo();
-              }
-            } else {
-              // For iframe, we don't have real control
-              isPlaying = !isPlaying;
-              document.getElementById('play-pause').textContent = isPlaying ? '❚❚' : '▶';
-              activateVisualizer(isPlaying);
-              updateStatus(isPlaying ? 'Playing' : 'Paused');
-            }
-          }
-          
-          // Toggle mute
-          function toggleMute() {
-            isMuted = !isMuted;
-            document.getElementById('volume').textContent = isMuted ? '🔇' : '🔊';
-            
-            if (playerType === 'api' && player) {
-              if (isMuted) {
-                player.mute();
-              } else {
-                player.unMute();
-              }
+          // Update progress bar
+          function updateProgress() {
+            if (duration > 0) {
+              const progressPercent = (currentTime / duration) * 100;
+              document.getElementById('progress').style.width = Math.min(progressPercent, 100) + '%';
             }
             
-            // For iframe we can only notify the user
-            updateStatus(isMuted ? 'Audio muted' : 'Audio unmuted');
-          }
-          
-          // Simulate progress for iframe embed
-          function startProgressSimulation() {
-            // Estimate a typical song length
-            duration = 240; // 4 minutes
-            
-            progressInterval = setInterval(() => {
-              if (isPlaying && !isMuted) {
-                currentTime++;
-                
-                // Update progress bar
-                const percent = (currentTime / duration) * 100;
-                document.getElementById('progress').style.width = percent + '%';
-                
-                // Update time display
-                document.getElementById('current-time').textContent = formatTime(currentTime);
-                document.getElementById('duration').textContent = formatTime(duration);
-              }
-            }, 1000);
-          }
-          
-          // Setup song end detection
-          function setupEndDetection() {
-            checkEndInterval = setInterval(() => {
-              if (currentTime >= duration) {
-                clearInterval(progressInterval);
-                clearInterval(checkEndInterval);
-                
-                if (isHost) {
-                  window.ReactNativeWebView.postMessage('VIDEO_ENDED');
-                }
-                
-                isPlaying = false;
-                document.getElementById('play-pause').textContent = '▶';
-                activateVisualizer(false);
-                updateStatus('Ended');
-              }
-            }, 1000);
+            document.getElementById('current-time').textContent = formatTime(currentTime);
+            document.getElementById('duration').textContent = formatTime(duration);
           }
           
           // Update status message
@@ -466,21 +281,259 @@ const YouTubePlayer = ({ videoUrl, isHost, onSongEnd }) => {
             document.getElementById('status').textContent = message;
           }
           
-          // Activate/deactivate visualizer
+          // Control visualizer animation
           function activateVisualizer(active) {
-            const bars = document.getElementsByClassName('bar');
-            for (let i = 0; i < bars.length; i++) {
+            const bars = document.querySelectorAll('.visualizer .bar');
+            bars.forEach(bar => {
               if (active) {
-                bars[i].classList.add('active');
+                bar.classList.add('active');
               } else {
-                bars[i].classList.remove('active');
+                bar.classList.remove('active');
+              }
+            });
+          }
+          
+          // Toggle play/pause
+          function togglePlayback() {
+            if (player && typeof player.getPlayerState === 'function') {
+              const playerState = player.getPlayerState();
+              if (playerState === 1) { // Playing
+                player.pauseVideo();
+              } else {
+                player.playVideo();
+              }
+            } else {
+              isPlaying = !isPlaying;
+              
+              if (isPlaying) {
+                updateStatus('Playing');
+                document.getElementById('play-pause').textContent = '❚❚';
+                activateVisualizer(true);
+                window.ReactNativeWebView.postMessage('PLAYING');
+              } else {
+                updateStatus('Paused');
+                document.getElementById('play-pause').textContent = '▶';
+                activateVisualizer(false);
+                window.ReactNativeWebView.postMessage('PAUSED');
               }
             }
           }
           
-          // Initialize player
-          setupVisualizer();
-          initPlayer();
+          // Toggle mute
+          function toggleMute() {
+            isMuted = !isMuted;
+            
+            if (player && typeof player.mute === 'function' && typeof player.unMute === 'function') {
+              if (isMuted) {
+                player.mute();
+              } else {
+                player.unMute();
+              }
+            }
+            
+            document.getElementById('volume').textContent = isMuted ? '🔇' : '🔊';
+            updateStatus(isMuted ? 'Muted' : isPlaying ? 'Playing' : 'Paused');
+            window.ReactNativeWebView.postMessage('MUTE_TOGGLED:' + isMuted);
+          }
+          
+          // Handle song end
+          function handleSongEnd() {
+            isPlaying = false;
+            document.getElementById('play-pause').textContent = '▶';
+            activateVisualizer(false);
+            updateStatus('Song ended');
+            window.ReactNativeWebView.postMessage('SONG_ENDED');
+            
+            if (progressInterval) {
+              clearInterval(progressInterval);
+            }
+          }
+          
+          // Load and initialize YouTube API
+          function loadYouTubeAPI() {
+            // Inject YouTube API script if not already present
+            if (!window.YT) {
+              const tag = document.createElement('script');
+              tag.src = 'https://www.youtube.com/iframe_api';
+              const firstScript = document.getElementsByTagName('script')[0];
+              firstScript.parentNode.insertBefore(tag, firstScript);
+            } else if (window.YT && window.YT.Player) {
+              createPlayer();
+            }
+            
+            window.onYouTubeIframeAPIReady = createPlayer;
+          }
+          
+          // Create YouTube player
+          function createPlayer() {
+            try {
+              player = new YT.Player('youtube-player', {
+                videoId: videoId,
+                playerVars: {
+                  autoplay: isHost ? 1 : 0,
+                  controls: 0,
+                  disablekb: 1,
+                  fs: 0,
+                  iv_load_policy: 3,
+                  modestbranding: 1,
+                  playsinline: 1,
+                  rel: 0,
+                  showinfo: 0,
+                  origin: window.location.origin,
+                  mute: 0
+                },
+                events: {
+                  'onReady': onPlayerReady,
+                  'onStateChange': onPlayerStateChange,
+                  'onError': onPlayerError
+                }
+              });
+              
+              updateStatus('Initializing YouTube player...');
+            } catch (error) {
+              console.error('Error creating YouTube player:', error);
+              updateStatus('Error creating player: ' + error.message);
+              window.ReactNativeWebView.postMessage('PLAYER_ERROR:' + error.message);
+            }
+          }
+          
+          // YouTube API callbacks
+          function onPlayerReady(event) {
+            window.ReactNativeWebView.postMessage('PLAYER_READY');
+            
+            // Set player volume to 100% and ensure it's not muted
+            event.target.setVolume(100);
+            event.target.unMute();
+            
+            // Start playing if host
+            if (isHost) {
+              event.target.playVideo();
+              document.getElementById('play-pause').textContent = '❚❚';
+              updateStatus('Playing');
+              activateVisualizer(true);
+            } else {
+              updateStatus('Ready to play');
+            }
+            
+            // Get video details
+            try {
+              duration = event.target.getDuration() || 0;
+              const videoData = event.target.getVideoData();
+              if (videoData && videoData.title) {
+                document.getElementById('title').textContent = videoData.title;
+                window.ReactNativeWebView.postMessage('TITLE:' + videoData.title);
+              }
+            } catch (e) {
+              console.error('Error getting video details:', e);
+            }
+            
+            updateProgress();
+            
+            // Start progress tracking
+            if (progressInterval) clearInterval(progressInterval);
+            progressInterval = setInterval(() => {
+              if (isPlaying && player && typeof player.getCurrentTime === 'function') {
+                try {
+                  currentTime = player.getCurrentTime();
+                  updateProgress();
+                } catch (e) {
+                  console.error('Error updating progress:', e);
+                }
+              }
+            }, 1000);
+          }
+          
+          function onPlayerStateChange(event) {
+            switch (event.data) {
+              case YT.PlayerState.PLAYING:
+                isPlaying = true;
+                document.getElementById('play-pause').textContent = '❚❚';
+                activateVisualizer(true);
+                updateStatus('Playing');
+                window.ReactNativeWebView.postMessage('PLAYING');
+                break;
+                
+              case YT.PlayerState.PAUSED:
+                isPlaying = false;
+                document.getElementById('play-pause').textContent = '▶';
+                activateVisualizer(false);
+                updateStatus('Paused');
+                window.ReactNativeWebView.postMessage('PAUSED');
+                break;
+                
+              case YT.PlayerState.ENDED:
+                handleSongEnd();
+                break;
+                
+              case YT.PlayerState.BUFFERING:
+                updateStatus('Buffering...');
+                break;
+                
+              case YT.PlayerState.CUED:
+                updateStatus('Video cued');
+                break;
+            }
+          }
+          
+          function onPlayerError(event) {
+            const errorCodes = {
+              2: 'Invalid video ID',
+              5: 'HTML5 player error',
+              100: 'Video not found',
+              101: 'Video unavailable',
+              150: 'Video unavailable'
+            };
+            
+            const errorMessage = errorCodes[event.data] || 'Unknown error ' + event.data;
+            console.error('YouTube player error:', errorMessage);
+            updateStatus('Error: ' + errorMessage);
+            window.ReactNativeWebView.postMessage('PLAYER_ERROR:' + errorMessage);
+            
+            // Try to recover from the error
+            setTimeout(() => {
+              if (player && typeof player.cueVideoById === 'function') {
+                try {
+                  player.cueVideoById(videoId);
+                } catch (e) {
+                  console.error('Error recovering player:', e);
+                }
+              }
+            }, 3000);
+          }
+          
+          // Initialize player when document is ready
+          document.addEventListener('DOMContentLoaded', () => {
+            setupVisualizer();
+            
+            if (isHost) {
+              activateVisualizer(true);
+              document.getElementById('play-pause').textContent = '❚❚';
+            }
+            
+            // Add a tiny delay before loading API (helps with mobile initialization)
+            setTimeout(() => loadYouTubeAPI(), 100);
+            
+            // Handle progress bar clicks
+            document.getElementById('progress-container').addEventListener('click', (e) => {
+              if (player && typeof player.getDuration === 'function' && typeof player.seekTo === 'function') {
+                const progressBar = e.currentTarget;
+                const rect = progressBar.getBoundingClientRect();
+                const clickPosition = (e.clientX - rect.left) / rect.width;
+                const seekTime = clickPosition * player.getDuration();
+                player.seekTo(seekTime);
+                currentTime = seekTime;
+                updateProgress();
+              }
+            });
+            
+            // Start heartbeat to keep connection alive
+            heartbeatInterval = setInterval(() => {
+              window.ReactNativeWebView.postMessage('HEARTBEAT');
+            }, 5000);
+            
+            // Let React Native know we're initialized
+            window.ReactNativeWebView.postMessage('INITIALIZED');
+          });
         </script>
       </body>
     </html>
@@ -490,18 +543,18 @@ const YouTubePlayer = ({ videoUrl, isHost, onSongEnd }) => {
   const handleWebViewMessage = (event) => {
     const message = event.nativeEvent.data;
     
-    if (message === 'PLAYER_READY' || message === 'API_PLAYER_READY') {
+    if (message === 'PLAYER_READY') {
       setLoading(false);
       setPlayerReady(true);
       setPlayerState('playing');
     } 
-    else if (message === 'VIDEO_ENDED') {
+    else if (message === 'SONG_ENDED') {
       onSongEnd && onSongEnd();
     } 
     else if (message.startsWith('TITLE:')) {
       console.log('Song title:', message.substring(6));
     }
-    else if (message.startsWith('YT_ERROR:') || message.startsWith('IFRAME_ERROR:') || message.startsWith('INIT_ERROR:')) {
+    else if (message.startsWith('PLAYER_ERROR:')) {
       console.log('Player error:', message);
       if (!playerReady) {
         setError(true);
@@ -559,9 +612,9 @@ const YouTubePlayer = ({ videoUrl, isHost, onSongEnd }) => {
         key={`player-${retry}`}
         style={styles.webView}
         originWhitelist={['*']}
-        source={{ html: simpleAudioHTML }}
+        source={{ html: enhancedAudioHTML }}
         onMessage={handleWebViewMessage}
-        mediaPlaybackRequiresUserAction={false} // Important for autoplay
+        mediaPlaybackRequiresUserAction={false}
         allowsInlineMediaPlayback={true}
         javaScriptEnabled={true}
         domStorageEnabled={true}
@@ -569,6 +622,8 @@ const YouTubePlayer = ({ videoUrl, isHost, onSongEnd }) => {
         androidLayerType="hardware"
         bounces={false}
         scrollEnabled={false}
+        allowsFullscreenVideo={false}
+        cacheEnabled={true}
         automaticallyAdjustContentInsets={false}
         onError={() => {
           setError(true);
@@ -595,7 +650,7 @@ const YouTubePlayer = ({ videoUrl, isHost, onSongEnd }) => {
 
 const styles = StyleSheet.create({
   container: {
-    height: 120, // Smaller height for audio-only player
+    height: 110, // Reduced height for audio-only player
     width: '100%',
     backgroundColor: '#2C3E50',
     borderRadius: 12,
@@ -617,7 +672,7 @@ const styles = StyleSheet.create({
   loadingText: {
     color: '#fff',
     marginTop: 10,
-    fontSize: 16,
+    fontSize: 14,
   },
   errorContainer: {
     ...StyleSheet.absoluteFillObject,
@@ -629,8 +684,9 @@ const styles = StyleSheet.create({
   errorText: {
     color: '#fff',
     marginTop: 10,
-    fontSize: 16,
+    fontSize: 14,
     marginBottom: 10,
+    textAlign: 'center',
   },
   retryButton: {
     backgroundColor: '#3498db',
@@ -642,22 +698,23 @@ const styles = StyleSheet.create({
   retryText: {
     color: 'white',
     fontWeight: 'bold',
+    fontSize: 12,
   },
   audioIndicator: {
     position: 'absolute',
-    bottom: 10,
-    right: 10,
+    bottom: 8,
+    right: 8,
     backgroundColor: 'rgba(0,0,0,0.5)',
-    borderRadius: 15,
-    paddingVertical: 5,
-    paddingHorizontal: 10,
+    borderRadius: 12,
+    paddingVertical: 4,
+    paddingHorizontal: 8,
     flexDirection: 'row',
     alignItems: 'center',
   },
   audioText: {
     color: 'white',
-    fontSize: 12,
-    marginLeft: 5,
+    fontSize: 10,
+    marginLeft: 4,
   }
 });
 

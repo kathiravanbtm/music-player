@@ -1,137 +1,101 @@
 import React, { useState } from 'react';
-import { View, Text, TextInput, TouchableOpacity, StyleSheet, Alert, ActivityIndicator } from 'react-native';
-import { collection, addDoc, serverTimestamp } from 'firebase/firestore';
-import { db } from '../config/firebase.js';
+import { View, Text, StyleSheet, KeyboardAvoidingView, ScrollView, Platform, SafeAreaView } from 'react-native';
+import CreateRoomForm from '../components/forms/CreateRoomForm';
+import LoadingScreen from '../components/ui/LoadingScreen';
+import roomService from '../services/roomService';
 
 const CreateRoomScreen = ({ navigation }) => {
-  const [roomName, setRoomName] = useState('');
-  const [userName, setUserName] = useState('');
   const [isLoading, setIsLoading] = useState(false);
 
-  // Generate a random 6-digit room ID
-  const generateRoomId = () => {
-    return Math.floor(100000 + Math.random() * 900000).toString();
-  };
-
-  const createRoom = async () => {
-    if (!roomName.trim() || !userName.trim()) {
-      Alert.alert('Error', 'Please enter both room name and your name');
-      return;
-    }
-
+  const handleCreateRoom = async (roomName, userName) => {
     setIsLoading(true);
+    
     try {
-      // Generate a numeric room ID
-      const numericRoomId = generateRoomId();
+      const result = await roomService.createRoom(roomName, userName);
       
-      // Create a new room in Firestore using the numeric ID
-      const roomRef = await addDoc(collection(db, 'rooms'), {
-        name: roomName,
-        createdBy: userName,
-        createdAt: serverTimestamp(),
-        isActive: true,
-        currentSong: null,
-        numericId: numericRoomId, // Add the numeric ID field
-        songs: []
-      });
-
       // Navigate to the room screen
-      setIsLoading(false);
       navigation.navigate('Room', { 
-        roomId: roomRef.id, 
-        roomName: roomName,
-        userName: userName,
+        roomId: result.roomId, 
+        roomName: result.roomName,
+        userName: result.userName,
         isHost: true,
-        numericRoomId: numericRoomId // Pass the numeric ID to the room
+        numericRoomId: result.numericRoomId
       });
-    } catch (error) {
+    } finally {
       setIsLoading(false);
-      console.error('Error creating room:', error);
-      Alert.alert('Error', 'Failed to create room. Please try again.');
     }
   };
+
+  if (isLoading) {
+    return <LoadingScreen message="Creating room..." />;
+  }
 
   return (
-    <View style={styles.container}>
-      <Text style={styles.title}>Create a Room</Text>
-      
-      <TextInput
-        style={styles.input}
-        placeholder="Room Name"
-        value={roomName}
-        onChangeText={setRoomName}
-      />
-      
-      <TextInput
-        style={styles.input}
-        placeholder="Your Name"
-        value={userName}
-        onChangeText={setUserName}
-      />
-      
-      {isLoading ? (
-        <ActivityIndicator size="large" color="#fff" />
-      ) : (
-        <TouchableOpacity style={styles.primaryButton} onPress={createRoom}>
-          <Text style={styles.buttonText}>Create Room</Text>
-        </TouchableOpacity>
-      )}
-      
-      <TouchableOpacity 
-        style={styles.secondaryButton} 
-        onPress={() => navigation.navigate('Join')}
+    <SafeAreaView style={styles.container}>
+      <KeyboardAvoidingView 
+        style={styles.keyboardContainer}
+        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
       >
-        <Text style={styles.secondaryButtonText}>Back to Join Room</Text>
-      </TouchableOpacity>
-    </View>
+        <ScrollView 
+          style={styles.scrollView}
+          contentContainerStyle={styles.scrollContent}
+          keyboardShouldPersistTaps="handled"
+        >
+          <View style={styles.header}>
+            <Text style={styles.title}>Create Room</Text>
+            <Text style={styles.subtitle}>
+              Start your own music room and invite friends to join!
+            </Text>
+          </View>
+          
+          <View style={styles.formContainer}>
+            <CreateRoomForm 
+              onCreateRoom={handleCreateRoom}
+              isLoading={isLoading}
+            />
+          </View>
+        </ScrollView>
+      </KeyboardAvoidingView>
+    </SafeAreaView>
   );
 };
 
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    justifyContent: 'center',
-    padding: 20,
     backgroundColor: '#667eea',
   },
-  title: {
-    fontSize: 24,
-    fontWeight: 'bold',
-    color: '#fff',
-    textAlign: 'center',
+  keyboardContainer: {
+    flex: 1,
+  },
+  scrollView: {
+    flex: 1,
+  },
+  scrollContent: {
+    flexGrow: 1,
+    justifyContent: 'center',
+    padding: 20,
+  },
+  header: {
+    alignItems: 'center',
     marginBottom: 40,
   },
-  input: {
-    backgroundColor: '#fff',
-    borderRadius: 10,
-    padding: 15,
-    fontSize: 16,
-    marginBottom: 20,
-  },
-  primaryButton: {
-    backgroundColor: '#4CAF50',
-    borderRadius: 10,
-    padding: 15,
-    alignItems: 'center',
-    marginBottom: 15,
-  },
-  secondaryButton: {
-    backgroundColor: 'transparent',
-    borderWidth: 2,
-    borderColor: '#fff',
-    borderRadius: 10,
-    padding: 15,
-    alignItems: 'center',
-  },
-  buttonText: {
-    fontSize: 16,
+  title: {
+    fontSize: 28,
     fontWeight: 'bold',
     color: '#fff',
+    marginBottom: 8,
   },
-  secondaryButtonText: {
+  subtitle: {
     fontSize: 16,
-    fontWeight: 'bold',
-    color: '#fff',
+    color: '#ddd',
+    textAlign: 'center',
+    lineHeight: 22,
+  },
+  formContainer: {
+    backgroundColor: 'rgba(255, 255, 255, 0.95)',
+    borderRadius: 12,
+    padding: 20,
   },
 });
 

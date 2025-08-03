@@ -74,6 +74,7 @@ expo start
 - Add password for host to rejoin as host
 - Show available rooms to join
 - Improve overall UI/UX
+- add ios support
 
 ---
 
@@ -86,3 +87,5 @@ Feel free to open issues or submit pull requests for new features or bug fixes!
 ## 📄 License
 
 MIT
+
+

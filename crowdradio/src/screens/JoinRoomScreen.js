@@ -1,173 +1,107 @@
 import React, { useState } from 'react';
-import { View, Text, TextInput, TouchableOpacity, StyleSheet, Alert, ActivityIndicator } from 'react-native';
-import { collection, query, where, getDocs, getDoc, doc } from 'firebase/firestore';
-import { db } from '../config/firebase.js';
+import { View, Text, StyleSheet, KeyboardAvoidingView, ScrollView, Platform, SafeAreaView } from 'react-native';
+import JoinRoomForm from '../components/forms/JoinRoomForm';
+import LoadingScreen from '../components/ui/LoadingScreen';
+import joinRoomService from '../services/joinRoomService';
 
 const JoinRoomScreen = ({ navigation }) => {
-  const [roomCode, setRoomCode] = useState('');
-  const [userName, setUserName] = useState('');
   const [isLoading, setIsLoading] = useState(false);
 
-  const joinRoom = async () => {
-    if (!roomCode.trim()) {
-      Alert.alert('Error', 'Please enter a Room Code');
-      return;
-    }
-    
-    if (!userName.trim()) {
-      Alert.alert('Error', 'Please enter your name');
-      return;
-    }
-    
+  const handleJoinRoom = async (roomCode, userName) => {
     setIsLoading(true);
     
     try {
-      // Try to find the room using the numeric ID
-      const roomsQuery = query(
-        collection(db, 'rooms'), 
-        where('numericId', '==', roomCode)
-      );
+      const result = await joinRoomService.findAndJoinRoom(roomCode, userName);
       
-      let actualRoomId, roomData;
-      
-      try {
-        const roomSnapshot = await getDocs(roomsQuery);
-        
-        if (!roomSnapshot.empty) {
-          // Get the actual room document
-          const roomDoc = roomSnapshot.docs[0];
-          roomData = roomDoc.data();
-          actualRoomId = roomDoc.id;
-        } else {
-          // Room not found, but we'll create a temporary local room anyway
-          console.log('Room not found, creating temporary local room');
-          actualRoomId = 'local-' + roomCode;
-          roomData = {
-            name: 'Room ' + roomCode,
-            createdBy: 'Anonymous',
-            isActive: true,
-          };
-        }
-      } catch (dbError) {
-        console.error('Database error:', dbError);
-        // If database error, create a local room
-        actualRoomId = 'local-' + roomCode;
-        roomData = {
-          name: 'Room ' + roomCode,
-          createdBy: 'Anonymous',
-          isActive: true,
-        };
+      if (result.success) {
+        // Navigate to the room screen only if successful
+        navigation.navigate('Room', {
+          roomId: result.roomId,
+          roomName: result.roomName,
+          userName: result.userName,
+          isHost: result.isHost,
+          isLocalRoom: result.isLocalRoom,
+          numericRoomId: result.numericRoomId
+        });
       }
       
-      // Navigate to the room (whether real or local)
+      // Return the result so the form can handle errors
+      return result;
+    } finally {
       setIsLoading(false);
-      navigation.navigate('Room', { 
-        roomId: actualRoomId,
-        roomName: roomData?.name || ('Room ' + roomCode),
-        userName: userName,
-        isHost: actualRoomId.startsWith('local-'), // If local room, user is host
-        numericRoomId: roomCode,
-        isLocalRoom: actualRoomId.startsWith('local-')
-      });
-    } catch (error) {
-      console.error('Error joining room:', error);
-      // Even if there's an error, let's still try to navigate to a local room
-      setIsLoading(false);
-      navigation.navigate('Room', { 
-        roomId: 'local-' + roomCode,
-        roomName: 'Room ' + roomCode,
-        userName: userName,
-        isHost: true,
-        numericRoomId: roomCode,
-        isLocalRoom: true
-      });
     }
   };
 
+  if (isLoading) {
+    return <LoadingScreen message="Finding room..." />;
+  }
+
   return (
-    <View style={styles.container}>
-      <Text style={styles.title}>Join a Room</Text>
-      <TextInput
-        style={styles.input}
-        placeholder="Enter 6-digit Room Code"
-        value={roomCode}
-        onChangeText={setRoomCode}
-        keyboardType="numeric"
-        maxLength={6}
-      />
-      <TextInput
-        style={styles.input}
-        placeholder="Your Name"
-        value={userName}
-        onChangeText={setUserName}
-      />
-      
-      {isLoading ? (
-        <ActivityIndicator size="large" color="#fff" style={styles.loader} />
-      ) : (
-        <TouchableOpacity style={styles.primaryButton} onPress={joinRoom}>
-          <Text style={styles.buttonText}>Join Room</Text>
-        </TouchableOpacity>
-      )}
-      
-      <TouchableOpacity 
-        style={styles.secondaryButton} 
-        onPress={() => navigation.navigate('Create')}
+    <SafeAreaView style={styles.container}>
+      <KeyboardAvoidingView 
+        style={styles.keyboardContainer}
+        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
       >
-        <Text style={styles.secondaryButtonText}>Create Room Instead</Text>
-      </TouchableOpacity>
-    </View>
+        <ScrollView 
+          style={styles.scrollView}
+          contentContainerStyle={styles.scrollContent}
+          keyboardShouldPersistTaps="handled"
+        >
+          <View style={styles.header}>
+            <Text style={styles.title}>Join Room</Text>
+            <Text style={styles.subtitle}>
+              Enter the 6-digit room code to join an existing music room!
+            </Text>
+          </View>
+          
+          <View style={styles.formContainer}>
+            <JoinRoomForm 
+              onJoinRoom={handleJoinRoom}
+              isLoading={isLoading}
+            />
+          </View>
+        </ScrollView>
+      </KeyboardAvoidingView>
+    </SafeAreaView>
   );
 };
 
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    justifyContent: 'center',
-    padding: 20,
     backgroundColor: '#667eea',
   },
-  title: {
-    fontSize: 24,
-    fontWeight: 'bold',
-    color: '#fff',
-    textAlign: 'center',
+  keyboardContainer: {
+    flex: 1,
+  },
+  scrollView: {
+    flex: 1,
+  },
+  scrollContent: {
+    flexGrow: 1,
+    justifyContent: 'center',
+    padding: 20,
+  },
+  header: {
+    alignItems: 'center',
     marginBottom: 40,
   },
-  input: {
-    backgroundColor: '#fff',
-    borderRadius: 10,
-    padding: 15,
-    fontSize: 16,
-    marginBottom: 20,
-  },
-  primaryButton: {
-    backgroundColor: '#4CAF50',
-    borderRadius: 10,
-    padding: 15,
-    alignItems: 'center',
-    marginBottom: 15,
-  },
-  secondaryButton: {
-    backgroundColor: 'transparent',
-    borderWidth: 2,
-    borderColor: '#fff',
-    borderRadius: 10,
-    padding: 15,
-    alignItems: 'center',
-  },
-  buttonText: {
-    fontSize: 16,
+  title: {
+    fontSize: 28,
     fontWeight: 'bold',
     color: '#fff',
+    marginBottom: 8,
   },
-  secondaryButtonText: {
+  subtitle: {
     fontSize: 16,
-    fontWeight: 'bold',
-    color: '#fff',
+    color: '#ddd',
+    textAlign: 'center',
+    lineHeight: 22,
   },
-  loader: {
-    marginVertical: 15,
+  formContainer: {
+    backgroundColor: 'rgba(255, 255, 255, 0.95)',
+    borderRadius: 12,
+    padding: 20,
   },
 });
 
