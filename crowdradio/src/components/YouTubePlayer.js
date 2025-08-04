@@ -8,13 +8,16 @@ import { AntDesign } from '@expo/vector-icons';
  * A simplified YouTube audio player component focused solely on audio playback
  * This implementation uses a direct HTML5-friendly approach to improve compatibility
  */
-const YouTubePlayer = ({ videoUrl, isHost, onSongEnd }) => {
+const YouTubePlayer = ({ videoUrl, isHost, onSongEnd, onNext, onPrevious }) => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(false);
   const [playerReady, setPlayerReady] = useState(false);
-  const [playerState, setPlayerState] = useState('loading'); // loading, playing, paused, error
+  const [playerState, setPlayerState] = useState('loading');
   const [retry, setRetry] = useState(0);
-  
+  const [errorMessage, setErrorMessage] = useState('');
+  const [buffering, setBuffering] = useState(false);
+  const [currentTitle, setCurrentTitle] = useState('');
+
   // Extract video ID from YouTube URL
   const getYouTubeVideoId = (url) => {
     if (!url) return null;
@@ -39,7 +42,12 @@ const YouTubePlayer = ({ videoUrl, isHost, onSongEnd }) => {
   };
   
   const videoId = getYouTubeVideoId(videoUrl);
-  
+
+  if (!isHost) {
+    // For non-hosts, render nothing (or a minimal placeholder if you want)
+    return null;
+  }
+
   if (!videoId) {
     return (
       <View style={styles.errorContainer}>
@@ -202,6 +210,71 @@ const YouTubePlayer = ({ videoUrl, isHost, onSongEnd }) => {
             z-index: -10;
             border: none;
           }
+          
+          .volume-control {
+            width: 100%;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            margin: 8px 0;
+          }
+          
+          .volume-slider {
+            flex: 1;
+            height: 4px;
+            border-radius: 2px;
+            background: rgba(255, 255, 255, 0.2);
+            -webkit-appearance: none;
+            cursor: pointer;
+          }
+          
+          .volume-slider::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            background: #3498db;
+            cursor: pointer;
+          }
+          
+          .volume-icon {
+            width: 24px;
+            text-align: center;
+            cursor: pointer;
+          }
+          
+          .skip-controls {
+            display: flex;
+            justify-content: center;
+            gap: 16px;
+            margin-top: 8px;
+          }
+          
+          .skip-button {
+            background: none;
+            border: none;
+            color: rgba(255, 255, 255, 0.7);
+            cursor: pointer;
+            padding: 4px;
+            font-size: 12px;
+            display: flex;
+            align-items: center;
+            gap: 4px;
+          }
+          
+          .skip-button:hover {
+            color: white;
+          }
+          
+          .loading-spinner {
+            display: inline-block;
+            width: 12px;
+            height: 12px;
+            border: 2px solid rgba(255, 255, 255, 0.3);
+            border-top: 2px solid white;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+          }
         </style>
       </head>
       <body>
@@ -222,10 +295,21 @@ const YouTubePlayer = ({ videoUrl, isHost, onSongEnd }) => {
           </div>
           
           <div class="controls">
-            <button class="control-button" id="play-pause" onclick="togglePlayback()">▶</button>
-            <button class="control-button" id="volume" onclick="toggleMute()">🔊</button>
+            <button class="control-button" id="prev" onclick="previousSong()" title="Previous song">⏮</button>
+            <button class="control-button play-button" id="play-pause" onclick="togglePlayback()">▶</button>
+            <button class="control-button" id="next" onclick="nextSong()" title="Next song">⏭</button>
           </div>
           
+          <div class="volume-control">
+            <span class="volume-icon" id="volume" onclick="toggleMute()">🔊</span>
+            <input type="range" class="volume-slider" id="volume-slider" min="0" max="100" value="100" />
+          </div>
+          
+          <div class="skip-controls">
+            <button class="skip-button" onclick="skipBackward()">-10s ⏪</button>
+            <button class="skip-button" onclick="skipForward()">⏩ +10s</button>
+          </div>
+
           <div class="status" id="status">Connecting...</div>
         </div>
         
@@ -319,21 +403,66 @@ const YouTubePlayer = ({ videoUrl, isHost, onSongEnd }) => {
             }
           }
           
-          // Toggle mute
+          // Initialize volume slider
+          const volumeSlider = document.getElementById('volume-slider');
+          volumeSlider.addEventListener('input', (e) => {
+            const volume = parseInt(e.target.value);
+            if (player && typeof player.setVolume === 'function') {
+              player.setVolume(volume);
+              
+              // Update mute state and icon based on volume
+              isMuted = volume === 0;
+              document.getElementById('volume').textContent = 
+                volume === 0 ? '🔇' : 
+                volume < 50 ? '🔉' : '🔊';
+            }
+          });
+
+          // Skip forward/backward functions
+          function skipForward() {
+            if (player && typeof player.getCurrentTime === 'function') {
+              const newTime = Math.min(currentTime + 10, duration);
+              player.seekTo(newTime);
+              currentTime = newTime;
+              updateProgress();
+            }
+          }
+
+          function skipBackward() {
+            if (player && typeof player.getCurrentTime === 'function') {
+              const newTime = Math.max(currentTime - 10, 0);
+              player.seekTo(newTime);
+              currentTime = newTime;
+              updateProgress();
+            }
+          }
+
+          // Previous/Next song functions
+          function previousSong() {
+            window.ReactNativeWebView.postMessage('PREVIOUS_SONG');
+          }
+
+          function nextSong() {
+            window.ReactNativeWebView.postMessage('NEXT_SONG');
+          }
+
+          // Enhanced toggle mute function
           function toggleMute() {
-            isMuted = !isMuted;
-            
-            if (player && typeof player.mute === 'function' && typeof player.unMute === 'function') {
+            if (player && typeof player.isMuted === 'function') {
+              isMuted = !isMuted;
               if (isMuted) {
                 player.mute();
+                volumeSlider.value = 0;
               } else {
                 player.unMute();
+                const lastVolume = parseInt(volumeSlider.getAttribute('data-last-volume') || '100');
+                volumeSlider.value = lastVolume;
+                player.setVolume(lastVolume);
               }
+              
+              document.getElementById('volume').textContent = isMuted ? '🔇' : '🔊';
+              updateStatus(isMuted ? 'Muted' : isPlaying ? 'Playing' : 'Paused');
             }
-            
-            document.getElementById('volume').textContent = isMuted ? '🔇' : '🔊';
-            updateStatus(isMuted ? 'Muted' : isPlaying ? 'Playing' : 'Paused');
-            window.ReactNativeWebView.postMessage('MUTE_TOGGLED:' + isMuted);
           }
           
           // Handle song end
@@ -475,32 +604,6 @@ const YouTubePlayer = ({ videoUrl, isHost, onSongEnd }) => {
             }
           }
           
-          function onPlayerError(event) {
-            const errorCodes = {
-              2: 'Invalid video ID',
-              5: 'HTML5 player error',
-              100: 'Video not found',
-              101: 'Video unavailable',
-              150: 'Video unavailable'
-            };
-            
-            const errorMessage = errorCodes[event.data] || 'Unknown error ' + event.data;
-            console.error('YouTube player error:', errorMessage);
-            updateStatus('Error: ' + errorMessage);
-            window.ReactNativeWebView.postMessage('PLAYER_ERROR:' + errorMessage);
-            
-            // Try to recover from the error
-            setTimeout(() => {
-              if (player && typeof player.cueVideoById === 'function') {
-                try {
-                  player.cueVideoById(videoId);
-                } catch (e) {
-                  console.error('Error recovering player:', e);
-                }
-              }
-            }, 3000);
-          }
-          
           // Initialize player when document is ready
           document.addEventListener('DOMContentLoaded', () => {
             setupVisualizer();
@@ -547,19 +650,42 @@ const YouTubePlayer = ({ videoUrl, isHost, onSongEnd }) => {
       setLoading(false);
       setPlayerReady(true);
       setPlayerState('playing');
+      setError(false);
+      setErrorMessage('');
     } 
     else if (message === 'SONG_ENDED') {
       onSongEnd && onSongEnd();
-    } 
+    }
+    else if (message === 'NEXT_SONG') {
+      onNext && onNext();
+    }
+    else if (message === 'PREVIOUS_SONG') {
+      onPrevious && onPrevious();
+    }
     else if (message.startsWith('TITLE:')) {
-      console.log('Song title:', message.substring(6));
+      const title = message.substring(6);
+      setCurrentTitle(title);
+      console.log('Song title:', title);
     }
     else if (message.startsWith('PLAYER_ERROR:')) {
-      console.log('Player error:', message);
+      const errorMsg = message.substring(12);
+      console.log('Player error:', errorMsg);
+      setErrorMessage(errorMsg);
       if (!playerReady) {
         setError(true);
         setPlayerState('error');
       }
+    }
+    else if (message === 'BUFFERING') {
+      setBuffering(true);
+    }
+    else if (message === 'PLAYING') {
+      setBuffering(false);
+      setPlayerState('playing');
+    }
+    else if (message === 'PAUSED') {
+      setBuffering(false);
+      setPlayerState('paused');
     }
     // All other messages are just logged for debugging
     else if (!message.startsWith('HEARTBEAT')) {
@@ -593,7 +719,7 @@ const YouTubePlayer = ({ videoUrl, isHost, onSongEnd }) => {
       {error && (
         <View style={styles.errorContainer}>
           <AntDesign name="warning" size={24} color="#FFCC00" />
-          <Text style={styles.errorText}>Failed to load audio</Text>
+          <Text style={styles.errorText}>{errorMessage || 'Failed to load audio'}</Text>
           <TouchableOpacity 
             style={styles.retryButton} 
             onPress={() => {
@@ -608,40 +734,63 @@ const YouTubePlayer = ({ videoUrl, isHost, onSongEnd }) => {
         </View>
       )}
       
-      <WebView
-        key={`player-${retry}`}
-        style={styles.webView}
-        originWhitelist={['*']}
-        source={{ html: enhancedAudioHTML }}
-        onMessage={handleWebViewMessage}
-        mediaPlaybackRequiresUserAction={false}
-        allowsInlineMediaPlayback={true}
-        javaScriptEnabled={true}
-        domStorageEnabled={true}
-        mixedContentMode="always"
-        androidLayerType="hardware"
-        bounces={false}
-        scrollEnabled={false}
-        allowsFullscreenVideo={false}
-        cacheEnabled={true}
-        automaticallyAdjustContentInsets={false}
-        onError={() => {
-          setError(true);
-          setLoading(false);
-        }}
-        startInLoadingState={true}
-        onLoadEnd={() => {
-          // Backup in case player ready message is never received
-          setTimeout(() => {
-            if (loading) setLoading(false);
-          }, 8000);
-        }}
-      />
+      {isHost && (
+        <WebView
+          key={`player-${retry}`}
+          style={styles.webView}
+          originWhitelist={['*']}
+          source={{ html: enhancedAudioHTML }}
+          onMessage={handleWebViewMessage}
+          mediaPlaybackRequiresUserAction={false}
+          allowsInlineMediaPlayback={true}
+          javaScriptEnabled={true}
+          domStorageEnabled={true}
+          mixedContentMode="always"
+          androidLayerType="hardware"
+          bounces={false}
+          scrollEnabled={false}
+          allowsFullscreenVideo={false}
+          cacheEnabled={true}
+          automaticallyAdjustContentInsets={false}
+          onError={(syntheticEvent) => {
+            console.error('WebView error:', syntheticEvent.nativeEvent);
+            setError(true);
+            setLoading(false);
+            setErrorMessage('Failed to load YouTube player');
+          }}
+          startInLoadingState={true}
+          onLoadEnd={() => {
+            // Backup in case player ready message is never received
+            setTimeout(() => {
+              if (loading) {
+                setLoading(false);
+                if (!playerReady) {
+                  setError(true);
+                  setErrorMessage('Player failed to initialize');
+                }
+              }
+            }, 8000);
+          }}
+        />
+      )}
       
       {playerReady && (
-        <View style={styles.audioIndicator}>
-          <AntDesign name="sound" size={16} color="#3498db" />
-          <Text style={styles.audioText}>{isHost ? "Playing audio" : "Audio ready"}</Text>
+        <View style={[
+          styles.audioIndicator,
+          buffering && styles.audioIndicatorBuffering
+        ]}>
+          {buffering ? (
+            <ActivityIndicator size="small" color="#3498db" style={styles.bufferingIndicator} />
+          ) : (
+            <AntDesign 
+              name={playerState === 'playing' ? "sound" : "pause"} 
+              size={16} 
+              color="#3498db" 
+            />
+          )}
+          <Text style={styles.audioText} numberOfLines={1} ellipsizeMode="tail">
+            {buffering ? "Buffering..." : currentTitle || (isHost ? "Playing audio" : "Audio ready")}
+          </Text>
         </View>
       )}
     </View>
@@ -650,7 +799,7 @@ const YouTubePlayer = ({ videoUrl, isHost, onSongEnd }) => {
 
 const styles = StyleSheet.create({
   container: {
-    height: 110, // Reduced height for audio-only player
+    height: 160, // Increased height to accommodate new controls
     width: '100%',
     backgroundColor: '#2C3E50',
     borderRadius: 12,
@@ -680,6 +829,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
     zIndex: 1,
+    padding: 16,
   },
   errorText: {
     color: '#fff',
@@ -710,11 +860,19 @@ const styles = StyleSheet.create({
     paddingHorizontal: 8,
     flexDirection: 'row',
     alignItems: 'center',
+    maxWidth: '80%',
+  },
+  audioIndicatorBuffering: {
+    backgroundColor: 'rgba(52, 152, 219, 0.2)',
+  },
+  bufferingIndicator: {
+    marginRight: 4,
   },
   audioText: {
     color: 'white',
-    fontSize: 10,
+    fontSize: 12,
     marginLeft: 4,
+    flex: 1,
   }
 });
 

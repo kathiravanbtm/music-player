@@ -1,9 +1,8 @@
 import React from 'react';
-import { View, Text, StyleSheet, TouchableOpacity } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity, Alert } from 'react-native';
 import { AntDesign } from '@expo/vector-icons';
-import Button from './ui/Button';
 
-const SongList = ({ songs, onVote, onRemove, currentUser, isHost }) => {
+const SongList = ({ songs, onVote, onRemove, userId, isHost, currentSongId }) => {
   if (!songs || songs.length === 0) {
     return (
       <View style={styles.emptyContainer}>
@@ -12,84 +11,114 @@ const SongList = ({ songs, onVote, onRemove, currentUser, isHost }) => {
     );
   }
 
-  // Sort songs by votes (descending) then by time added (ascending)
-  const sortedSongs = [...songs].sort((a, b) => {
-    if (b.votes !== a.votes) {
-      return b.votes - a.votes;
-    }
-    return new Date(a.addedAt) - new Date(b.addedAt);
-  });
+  // Check if the user has already voted for a song
+  const hasUserVoted = (song) => song.voters?.includes(userId) || false;
 
-  const hasUserVoted = (song) => {
-    return song.voters?.includes(currentUser) || false;
+  // Handle voting logic
+  const handleVote = (songId, voteType) => {
+    if (isHost) {
+      Alert.alert('Voting Restricted', 'Hosts cannot vote on songs');
+      return;
+    }
+    if (songId === currentSongId) {
+      Alert.alert('Voting Restricted', 'Cannot vote on currently playing song');
+      return;
+    }
+    const song = songs.find(s => s.id === songId);
+    if (!song) return;
+    if (hasUserVoted(song)) {
+      Alert.alert('Already Voted', 'You can only vote once per song');
+      return;
+    }
+    onVote(songId, voteType, userId);
   };
 
-  const renderSongItem = (item, index) => (
-    <View key={item.id} style={styles.songItem}>
-      <View style={styles.songInfo}>
-        <Text style={styles.position}>#{index + 1}</Text>
-        <View style={styles.songDetails}>
-          <Text style={styles.songTitle} numberOfLines={2}>{item.title}</Text>
-          <Text style={styles.addedBy}>Added by: {item.addedBy}</Text>
+  // Render each song item
+  const renderSongItem = (item, index) => {
+    const isPlaying = item.id === currentSongId;
+    const userHasVoted = hasUserVoted(item);
+    return (
+      <View key={item.id} style={[
+        styles.songItem,
+        isPlaying && styles.currentlyPlaying
+      ]}>
+        <View style={styles.songInfo}>
+          <Text style={styles.position}>#{index + 1}</Text>
+          <View style={styles.songDetails}>
+            <Text style={styles.songTitle} numberOfLines={2}>
+              {isPlaying && '▶ '}{item.title}
+            </Text>
+            <Text style={styles.addedBy}>Added by: {item.addedBy}</Text>
+            {isPlaying && (
+              <Text style={styles.nowPlaying}>Now Playing</Text>
+            )}
+          </View>
+        </View>
+        <View style={styles.songActions}>
+          {/* Voting buttons for non-host and not currently playing song */}
+          {!isPlaying && !isHost && (
+            <View style={styles.voteButtons}>
+              <TouchableOpacity
+                style={[
+                  styles.voteButton,
+                  userHasVoted && styles.votedButton
+                ]}
+                onPress={() => handleVote(item.id, 'up')}
+                disabled={userHasVoted}
+              >
+                <AntDesign 
+                  name="like2" 
+                  size={16} 
+                  color={userHasVoted ? '#aaa' : '#3498db'} 
+                />
+              </TouchableOpacity>
+              <Text style={[
+                styles.voteCount,
+                item.votes < 0 && styles.negativeVotes
+              ]}>
+                {item.votes || 0}
+              </Text>
+              <TouchableOpacity
+                style={[
+                  styles.voteButton,
+                  userHasVoted && styles.votedButton
+                ]}
+                onPress={() => handleVote(item.id, 'down')}
+                disabled={userHasVoted}
+              >
+                <AntDesign 
+                  name="dislike2" 
+                  size={16} 
+                  color={userHasVoted ? '#aaa' : '#e74c3c'} 
+                />
+              </TouchableOpacity>
+            </View>
+          )}
+          {/* Remove button for host, not for currently playing song */}
+          {isHost && !isPlaying && onRemove && (
+            <TouchableOpacity
+              style={styles.removeButton}
+              onPress={() => onRemove(item.id)}
+            >
+              <AntDesign name="delete" size={16} color="#e74c3c" />
+            </TouchableOpacity>
+          )}
         </View>
       </View>
-      
-      <View style={styles.songActions}>
-        {/* Vote buttons */}
-        <TouchableOpacity
-          style={[
-            styles.voteButton,
-            hasUserVoted(item) && styles.votedButton
-          ]}
-          onPress={() => onVote(item.id, 'up')}
-        >
-          <AntDesign 
-            name="up" 
-            size={16} 
-            color={hasUserVoted(item) ? '#fff' : '#3498db'} 
-          />
-        </TouchableOpacity>
-        
-        <Text style={styles.voteCount}>{item.votes || 0}</Text>
-        
-        <TouchableOpacity
-          style={[
-            styles.voteButton,
-            hasUserVoted(item) && styles.votedButton
-          ]}
-          onPress={() => onVote(item.id, 'down')}
-        >
-          <AntDesign 
-            name="down" 
-            size={16} 
-            color={hasUserVoted(item) ? '#fff' : '#e74c3c'} 
-          />
-        </TouchableOpacity>
-
-        {/* Remove button for host */}
-        {isHost && onRemove && (
-          <TouchableOpacity
-            style={styles.removeButton}
-            onPress={() => onRemove(item.id)}
-          >
-            <AntDesign name="delete" size={16} color="#e74c3c" />
-          </TouchableOpacity>
-        )}
-      </View>
-    </View>
-  );
+    );
+  };
 
   return (
     <View style={styles.container}>
-      <Text style={styles.queueTitle}>Song Queue ({sortedSongs.length})</Text>
-      <View style={styles.list}>
-        {sortedSongs.map((item, index) => renderSongItem(item, index))}
-      </View>
+      {songs.map((item, index) => renderSongItem(item, index))}
     </View>
   );
 };
 
-  const styles = StyleSheet.create({
+const styles = StyleSheet.create({
+  container: {
+    flex: 1,
+  },
   emptyContainer: {
     padding: 20,
     alignItems: 'center',
@@ -100,17 +129,19 @@ const SongList = ({ songs, onVote, onRemove, currentUser, isHost }) => {
     textAlign: 'center',
     opacity: 0.7,
   },
-  list: {
-    maxHeight: 300,
-  },
   songItem: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
     alignItems: 'center',
-    padding: 15,
+    justifyContent: 'space-between',
     backgroundColor: 'rgba(255, 255, 255, 0.1)',
-    borderRadius: 10,
-    marginBottom: 10,
+    padding: 12,
+    marginBottom: 8,
+    borderRadius: 8,
+  },
+  currentlyPlaying: {
+    backgroundColor: 'rgba(52, 152, 219, 0.2)',
+    borderLeftWidth: 4,
+    borderLeftColor: '#3498db',
   },
   songInfo: {
     flex: 1,
@@ -118,37 +149,65 @@ const SongList = ({ songs, onVote, onRemove, currentUser, isHost }) => {
     alignItems: 'center',
   },
   position: {
-    fontSize: 18,
-    fontWeight: 'bold',
-    color: '#4CAF50',
-    marginRight: 15,
-    minWidth: 30,
+    width: 30,
+    color: '#fff',
+    opacity: 0.7,
+    fontSize: 14,
   },
   songDetails: {
     flex: 1,
+    marginRight: 10,
   },
   songTitle: {
-    fontSize: 16,
-    fontWeight: 'bold',
     color: '#fff',
-    marginBottom: 5,
+    fontSize: 16,
+    marginBottom: 4,
   },
   addedBy: {
-    fontSize: 12,
     color: '#fff',
     opacity: 0.7,
+    fontSize: 12,
+  },
+  nowPlaying: {
+    color: '#3498db',
+    fontSize: 12,
+    fontWeight: 'bold',
+    marginTop: 4,
   },
   songActions: {
     flexDirection: 'row',
     alignItems: 'center',
+    gap: 8,
+  },
+  voteButtons: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(0, 0, 0, 0.2)',
+    borderRadius: 16,
+    padding: 4,
+  },
+  voteButton: {
+    padding: 8,
+    borderRadius: 16,
+  },
+  votedButton: {
+    opacity: 0.5,
   },
   voteCount: {
-    fontSize: 16,
-    fontWeight: 'bold',
     color: '#fff',
-    marginHorizontal: 10,
-    minWidth: 30,
+    fontSize: 14,
+    fontWeight: 'bold',
+    marginHorizontal: 8,
+    minWidth: 24,
     textAlign: 'center',
+  },
+  negativeVotes: {
+    color: '#e74c3c',
+  },
+  removeButton: {
+    padding: 8,
+    borderRadius: 16,
+    backgroundColor: 'rgba(231, 76, 60, 0.2)',
   },
 });
 
