@@ -105,16 +105,24 @@ export const songService = {
     }
   },
 
-  // Get the next song to play (highest voted)
+  // Get the next song to play (highest voted with timestamp tiebreaker)
   getNextSong: (songs) => {
     if (!songs || songs.length === 0) return null;
     
-    // Sort by votes (descending) and then by time added (ascending)
+    // Sort by votes (descending) and then by time added (ascending) for priority
     const sortedSongs = [...songs].sort((a, b) => {
-      if (b.votes !== a.votes) {
-        return b.votes - a.votes;
+      const voteScoreA = a.votes || 0;
+      const voteScoreB = b.votes || 0;
+      
+      if (voteScoreA !== voteScoreB) {
+        return voteScoreB - voteScoreA;
       }
-      return new Date(a.addedAt) - new Date(b.addedAt);
+      
+      // If votes are equal, sort by timestamp (earlier added songs get priority)
+      const timestampA = new Date(a.addedAt || 0).getTime();
+      const timestampB = new Date(b.addedAt || 0).getTime();
+      
+      return timestampA - timestampB;
     });
 
     return sortedSongs[0];

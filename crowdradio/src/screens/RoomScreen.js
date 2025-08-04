@@ -1,10 +1,13 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { View, Text, StyleSheet, TextInput, TouchableOpacity, Alert, Share, ScrollView, ActivityIndicator, KeyboardAvoidingView, Platform, SafeAreaView } from 'react-native';
-import { doc, getDoc, collection, onSnapshot, addDoc, updateDoc, deleteDoc, arrayUnion, serverTimestamp } from 'firebase/firestore';
+import { doc, getDoc, collection, onSnapshot, addDoc, updateDoc, deleteDoc, arrayUnion, serverTimestamp, getDocs, query, where } from 'firebase/firestore';
 import { db } from '../config/firebase.js';
 import { AntDesign } from '@expo/vector-icons';
 import SongList from '../components/SongList.js';
 import YouTubePlayer from '../components/YouTubePlayer.js';
+import UserManagement from '../components/room/UserManagement.js';
+import roomService from '../services/roomService.js';
+import { useFocusEffect } from '@react-navigation/native';
 
 // Helper function to extract video ID from YouTube URL
 const getYouTubeVideoId = (url) => {
@@ -27,6 +30,25 @@ const getYouTubeVideoId = (url) => {
   }
   
   return videoId;
+};
+
+// Helper function to sort songs by votes with timestamp tiebreaker
+const sortSongsByPriority = (songs) => {
+  return [...songs].sort((a, b) => {
+    const voteScoreA = a.votes || 0;
+    const voteScoreB = b.votes || 0;
+    
+    // Sort by votes first (higher first)
+    if (voteScoreA !== voteScoreB) {
+      return voteScoreB - voteScoreA;
+    }
+    
+    // If votes are equal, sort by timestamp (earlier added songs get priority)
+    const timestampA = new Date(a.addedAt || 0).getTime();
+    const timestampB = new Date(b.addedAt || 0).getTime();
+    
+    return timestampA - timestampB;
+  });
 };
 
 // Function to fetch YouTube video title (can be replaced with a proper API call in production)
@@ -64,17 +86,43 @@ const RoomScreen = ({ route, navigation }) => {
   const [loading, setLoading] = useState(true);
   const [localSongs, setLocalSongs] = useState([]); // For local-only mode
   const [addingSong, setAddingSong] = useState(false); // For preventing duplicate song additions
+  
+  const [isHostAuthenticated, setIsHostAuthenticated] = useState(isHost);
+  
+  // User presence management
+  const [userPresenceInterval, setUserPresenceInterval] = useState(null);
 
   useEffect(() => {
     // Set the room name in the header
     navigation.setOptions({
       title: roomName || 'CrowdRadio Room',
       headerRight: () => (
-        <TouchableOpacity style={styles.shareButton} onPress={shareRoom}>
-          <Text style={styles.shareButtonText}>Share</Text>
-        </TouchableOpacity>
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+          <UserManagement 
+            roomId={roomId}
+            isHost={isHost}
+            isHostAuthenticated={isHostAuthenticated}
+            currentUser={userName}
+            isLocalRoom={isLocalRoom}
+          />
+          <TouchableOpacity style={styles.shareButton} onPress={shareRoom}>
+            <Text style={styles.shareButtonText}>Share</Text>
+          </TouchableOpacity>
+        </View>
       ),
     });
+
+    // Update user presence when joining
+    if (!isLocalRoom && roomId) {
+      roomService.updateUserPresence(roomId, userName, true, isHost);
+      
+      // Set up periodic presence updates
+      const interval = setInterval(() => {
+        roomService.updateUserPresence(roomId, userName, true, isHostAuthenticated && isHost);
+      }, 30000); // Update every 30 seconds
+      
+      setUserPresenceInterval(interval);
+    }
 
     // If in local mode, just set up local state
     if (isLocalRoom) {
@@ -140,7 +188,7 @@ const RoomScreen = ({ route, navigation }) => {
             
             // If we're the host and there's no current song playing, play the top voted song
             if (isHost && !roomData.currentSong && songsList.length > 0) {
-              const topSong = [...songsList].sort((a, b) => b.votes - a.votes)[0];
+              const topSong = sortSongsByPriority(songsList)[0];
               playNextSong(topSong);
             }
             
@@ -161,7 +209,18 @@ const RoomScreen = ({ route, navigation }) => {
     };
     
     fetchRoomData();
-  }, [roomId, navigation, roomName]);
+    
+    // Cleanup function
+    return () => {
+      if (userPresenceInterval) {
+        clearInterval(userPresenceInterval);
+      }
+      // Mark user as offline when leaving
+      if (!isLocalRoom && roomId) {
+        roomService.updateUserPresence(roomId, userName, false, isHost);
+      }
+    };
+  }, [roomId, navigation, roomName, isLocalRoom, userName, isHost, isHostAuthenticated]);
 
   const addSong = async (songUrl = newSongUrl) => {
     if (!songUrl.trim()) {
@@ -214,7 +273,7 @@ const RoomScreen = ({ route, navigation }) => {
         console.log('Error fetching title:', titleError);
       }
       
-      // Create song object with more unique ID
+      // Create song object with new voting structure
       const newSong = {
         id: Date.now().toString() + '_' + Math.random().toString(36).substr(2, 9),
         title: finalTitle,
@@ -222,8 +281,9 @@ const RoomScreen = ({ route, navigation }) => {
         videoId: videoId,
         addedBy: userName,
         votes: 0,
-        voters: [],
-        addedAt: new Date().toISOString()
+        voters: [], // Array of objects: { userId, voteType, timestamp }
+        addedAt: new Date().toISOString(),
+        lastVoteUpdate: Date.now()
       };
       
       // If local mode, use local state
@@ -239,8 +299,9 @@ const RoomScreen = ({ route, navigation }) => {
             videoId: videoId,
             addedBy: userName,
             votes: 0,
-            voters: [],
-            addedAt: serverTimestamp()
+            voters: [], // New voting structure
+            addedAt: serverTimestamp(),
+            lastVoteUpdate: Date.now()
           });
         } catch (fbError) {
           console.error('Firebase error, using local mode:', fbError);
@@ -261,12 +322,12 @@ const RoomScreen = ({ route, navigation }) => {
 
   // Handle when a song finishes playing
   const handleSongEnd = useCallback(async () => {
-    if (!isHost) return; // Only the host can control playback
+    if (!isHostAuthenticated || !isHost) return; // Only authenticated host can control playback
     
     try {
-      // Get the current top voted song
+      // Get the current top voted song with priority ordering
       if (songs.length > 0) {
-        const topSong = [...songs].sort((a, b) => b.votes - a.votes)[0];
+        const topSong = sortSongsByPriority(songs)[0];
         
         // If the current song is the top song, remove it and play the next one
         if (currentSong && currentSong.id === topSong.id) {
@@ -283,10 +344,10 @@ const RoomScreen = ({ route, navigation }) => {
             }
           }
           
-          // Play next highest voted song if available
+          // Play next highest voted song if available with priority ordering
           if (songs.length > 1) {
             const remainingSongs = songs.filter(song => song.id !== topSong.id);
-            const nextTopSong = [...remainingSongs].sort((a, b) => b.votes - a.votes)[0];
+            const nextTopSong = sortSongsByPriority(remainingSongs)[0];
             playNextSong(nextTopSong);
           } else {
             // No more songs in the queue
@@ -304,7 +365,7 @@ const RoomScreen = ({ route, navigation }) => {
             }
           }
         } else {
-          // The top voted song has changed, play the new top song
+          // The top voted song has changed, play the new top song with priority ordering
           playNextSong(topSong);
         }
       }
@@ -312,15 +373,15 @@ const RoomScreen = ({ route, navigation }) => {
       console.error("Error handling song end:", error);
       // Continue playback even if there's an error
       if (songs.length > 0) {
-        const topSong = [...songs].sort((a, b) => b.votes - a.votes)[0];
+        const topSong = sortSongsByPriority(songs)[0];
         playNextSong(topSong);
       }
     }
-  }, [songs, currentSong, roomId, isHost, isLocalRoom]);
+  }, [songs, currentSong, roomId, isHostAuthenticated, isHost, isLocalRoom]);
   
   // Play the next song in the queue
   const playNextSong = async (song) => {
-    if (!isHost || !song) return;
+    if (!isHostAuthenticated || !isHost || !song) return;
     
     try {
       // Always update local state
@@ -351,7 +412,7 @@ const RoomScreen = ({ route, navigation }) => {
   
   // Skip current song
   const skipCurrentSong = async () => {
-    if (!isHost) return;
+    if (!isHostAuthenticated || !isHost) return;
     
     try {
       // Always update local state first
@@ -386,9 +447,9 @@ const RoomScreen = ({ route, navigation }) => {
         }
       }
       
-      // Auto-play the next song in the queue
+      // Auto-play the next song in the queue with priority ordering
       if (remainingSongs.length > 0) {
-        const nextTopSong = [...remainingSongs].sort((a, b) => b.votes - a.votes)[0];
+        const nextTopSong = sortSongsByPriority(remainingSongs)[0];
         playNextSong(nextTopSong);
       }
     } catch (error) {
@@ -402,11 +463,45 @@ const RoomScreen = ({ route, navigation }) => {
         );
         
         if (remainingSongs.length > 0) {
-          const nextTopSong = [...remainingSongs].sort((a, b) => b.votes - a.votes)[0];
+          const nextTopSong = sortSongsByPriority(remainingSongs)[0];
           playNextSong(nextTopSong);
         }
       }
     }
+  };
+
+  // Confirm before leaving the room
+  useFocusEffect(
+    React.useCallback(() => {
+      const onBeforeRemove = (e) => {
+        e.preventDefault();
+        Alert.alert(
+          'Leave Room?',
+          'Do you want to leave the room?',
+          [
+            { text: 'Cancel', style: 'cancel', onPress: () => {} },
+            { text: 'Leave', style: 'destructive', onPress: () => navigation.dispatch(e.data.action) },
+          ]
+        );
+      };
+      navigation.addListener('beforeRemove', onBeforeRemove);
+      return () => navigation.removeListener('beforeRemove', onBeforeRemove);
+    }, [navigation])
+  );
+
+  // Improved voting logic with new algorithm
+  const handleVote = async (songId, newVoters, newScore) => {
+    if (isHostAuthenticated && isHost) return; // Host cannot vote
+    
+    // Update local state immediately for responsive UI
+    const updatedSongs = songs.map(song =>
+      song.id === songId
+        ? { ...song, voters: newVoters, votes: newScore, lastVoteUpdate: Date.now() }
+        : song
+    );
+    setSongs(updatedSongs);
+    
+    // Note: Firebase update is handled by VotingSystem component
   };
 
   const shareRoom = async () => {
@@ -432,89 +527,84 @@ const RoomScreen = ({ route, navigation }) => {
   }
 
   return (
-      <KeyboardAvoidingView
+    <KeyboardAvoidingView
       style={{ flex: 1 }}
       behavior={Platform.OS === 'ios' ? 'padding' : undefined}
       keyboardVerticalOffset={Platform.OS === 'ios' ? 0 : 24}
     >
       <SafeAreaView style={{ flex: 1, backgroundColor: '#667eea' }}>
-        <ScrollView
-          contentContainerStyle={{ flexGrow: 1, padding: 20 }}
-          keyboardShouldPersistTaps="handled"
-        >
-          {/* Room Details */}
-          <View style={styles.infoSection}>
-            <Text style={styles.roomId}>Room Code: {numericRoomId}</Text>
-            <Text style={styles.userInfo}>You are logged in as: {userName}</Text>
-            {isHost && <Text style={styles.hostBadge}>Host</Text>}
-          </View>
-          {/* YouTube Music Player (host only) */}
-          {isHost && (
-            <View style={styles.playerSection}>
-              <Text style={styles.sectionTitle}>Now Playing</Text>
-              {currentSong ? (
-                <YouTubePlayer
-                  videoUrl={currentSong.url}
-                  isHost={isHost}
-                  onSongEnd={handleSongEnd}
-                />
-              ) : (
-                <View style={styles.noSongContainer}>
-                  <AntDesign name="playcircleo" size={36} color="#fff" style={{ marginBottom: 10 }} />
-                  <Text style={styles.noSongText}>No songs in the queue. Add some music to get started!</Text>
+        <SongList 
+          songs={songs} 
+          roomId={roomId} 
+          isHost={isHostAuthenticated && isHost} 
+          userId={userName}
+          currentSongId={currentSong?.id}
+          onVote={handleVote}
+          isLocalRoom={isLocalRoom}
+          // Pass all the additional content as header components
+          ListHeaderComponent={() => (
+            <View style={{ padding: 20 }}>
+              {/* Room Details */}
+              <View style={styles.infoSection}>
+                <Text style={styles.roomId}>Room Code: {numericRoomId}</Text>
+                <Text style={styles.userInfo}>You are logged in as: {userName}</Text>
+                {isHostAuthenticated && isHost && <Text style={styles.hostBadge}>Host</Text>}
+              </View>
+              
+              {/* YouTube Music Player (host only) */}
+              {isHostAuthenticated && isHost && (
+                <View style={styles.playerSection}>
+                  <Text style={styles.sectionTitle}>Now Playing</Text>
+                  {currentSong ? (
+                    <YouTubePlayer
+                      videoUrl={currentSong.url}
+                      isHost={isHost}
+                      onSongEnd={handleSongEnd}
+                    />
+                  ) : (
+                    <View style={styles.noSongContainer}>
+                      <AntDesign name="playcircleo" size={36} color="#fff" style={{ marginBottom: 10 }} />
+                      <Text style={styles.noSongText}>No songs in the queue. Add some music to get started!</Text>
+                    </View>
+                  )}
                 </View>
               )}
+              
+              {/* Song Input Box */}
+              <View style={styles.addSongContainer}>
+                <TextInput
+                  style={[styles.input, addingSong && styles.disabledInput]}
+                  placeholder="Paste YouTube URL"
+                  placeholderTextColor="#999"
+                  value={newSongUrl}
+                  onChangeText={setNewSongUrl}
+                  returnKeyType="done"
+                  blurOnSubmit={true}
+                  editable={!addingSong}
+                  onSubmitEditing={() => {
+                    if (newSongUrl.trim() && !addingSong) addSong();
+                  }}
+                />
+                <TouchableOpacity
+                  style={[styles.primaryButton, (!newSongUrl.trim() || addingSong) && styles.disabledButton]}
+                  onPress={() => {
+                    if (newSongUrl.trim() && !addingSong) addSong();
+                  }}
+                  disabled={!newSongUrl.trim() || addingSong}
+                >
+                  {addingSong ? (
+                    <ActivityIndicator size="small" color="#fff" />
+                  ) : (
+                    <Text style={styles.buttonText}>Add</Text>
+                  )}
+                </TouchableOpacity>
+              </View>
+              
+              {/* Song Queue Header */}
+              <Text style={styles.sectionTitle}>Song Queue</Text>
             </View>
           )}
-          {/* Song Input Box (at the top, after player) */}
-          <View style={styles.addSongContainer}>
-            <TextInput
-              style={[styles.input, addingSong && styles.disabledInput]}
-              placeholder="Paste YouTube URL"
-              placeholderTextColor="#999"
-              value={newSongUrl}
-              onChangeText={setNewSongUrl}
-              returnKeyType="done"
-              blurOnSubmit={true}
-              editable={!addingSong}
-              onSubmitEditing={() => {
-                if (newSongUrl.trim() && !addingSong) addSong();
-              }}
-            />
-            <TouchableOpacity
-              style={[styles.primaryButton, (!newSongUrl.trim() || addingSong) && styles.disabledButton]}
-              onPress={() => {
-                if (newSongUrl.trim() && !addingSong) addSong();
-              }}
-              disabled={!newSongUrl.trim() || addingSong}
-            >
-              {addingSong ? (
-                <ActivityIndicator size="small" color="#fff" />
-              ) : (
-                <Text style={styles.buttonText}>Add</Text>
-              )}
-            </TouchableOpacity>
-          </View>
-          {/* Song Queue */}
-          <View style={styles.songSection}>
-            <Text style={styles.sectionTitle}>Song Queue</Text>
-            <SongList 
-              songs={songs} 
-              roomId={roomId} 
-              isHost={isHost} 
-              userId={userName}
-              currentSongId={currentSong?.id}
-              onVote={(songId, voteType, userId) => {
-                // You can implement the voting logic here or call a service
-                // For now, just show an alert for demonstration
-                // You should replace this with your actual voting logic
-                // Example: voteSong(roomId, songId, userId, voteType, songs, isLocalRoom)
-                // and then update state accordingly
-                // Alert.alert('Vote', `Voted ${voteType} on song ${songId} by ${userId}`);
-              }}
-            />
-          </View>
-        </ScrollView>
+        />
       </SafeAreaView>
     </KeyboardAvoidingView>
   );
@@ -564,6 +654,27 @@ const styles = StyleSheet.create({
     borderRadius: 15,
     marginTop: 5,
     fontWeight: 'bold',
+  },
+  hostControls: {
+    marginTop: 10,
+  },
+  hostLoginOptions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    flexWrap: 'wrap',
+  },
+  hostButton: {
+    backgroundColor: '#3498db',
+    paddingHorizontal: 15,
+    paddingVertical: 8,
+    borderRadius: 20,
+    alignSelf: 'flex-start',
+  },
+  hostButtonText: {
+    color: '#fff',
+    fontWeight: 'bold',
+    fontSize: 14,
   },
   playerSection: {
     marginBottom: 20,

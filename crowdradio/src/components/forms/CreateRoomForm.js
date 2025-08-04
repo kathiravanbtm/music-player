@@ -6,6 +6,7 @@ import Button from '../ui/Button';
 const CreateRoomForm = ({ onCreateRoom, isLoading = false }) => {
   const [roomName, setRoomName] = useState('');
   const [userName, setUserName] = useState('');
+  const [hostPassword, setHostPassword] = useState('');
   const [errors, setErrors] = useState({});
 
   const validateForm = () => {
@@ -19,6 +20,12 @@ const CreateRoomForm = ({ onCreateRoom, isLoading = false }) => {
       newErrors.userName = 'Your name is required';
     }
     
+    if (!hostPassword.trim()) {
+      newErrors.hostPassword = 'Host password is required';
+    } else if (hostPassword.trim().length < 4) {
+      newErrors.hostPassword = 'Password must be at least 4 characters';
+    }
+    
     setErrors(newErrors);
     return Object.keys(newErrors).length === 0;
   };
@@ -29,7 +36,7 @@ const CreateRoomForm = ({ onCreateRoom, isLoading = false }) => {
     }
 
     try {
-      await onCreateRoom(roomName.trim(), userName.trim());
+      await onCreateRoom(roomName.trim(), userName.trim(), hostPassword.trim());
     } catch (error) {
       console.error('Error creating room:', error);
       Alert.alert('Error', 'Failed to create room. Please try again.');
@@ -64,6 +71,20 @@ const CreateRoomForm = ({ onCreateRoom, isLoading = false }) => {
         }}
         error={errors.userName}
         autoCapitalize="words"
+      />
+      
+      <Input
+        label="Host Password"
+        placeholder="Set a password for host access..."
+        value={hostPassword}
+        onChangeText={(text) => {
+          setHostPassword(text);
+          if (errors.hostPassword) {
+            setErrors(prev => ({ ...prev, hostPassword: null }));
+          }
+        }}
+        error={errors.hostPassword}
+        secureTextEntry={true}
       />
       
       <Button

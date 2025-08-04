@@ -1,15 +1,28 @@
-import React from 'react';
-import { View, Text, StyleSheet, SafeAreaView } from 'react-native';
+import React, { useState } from 'react';
+import { View, Text, StyleSheet, SafeAreaView, TextInput } from 'react-native';
 import { AntDesign } from '@expo/vector-icons';
 import Button from '../components/ui/Button';
+import HostReconnection from '../components/room/HostReconnection';
 
 const HomeScreen = ({ navigation }) => {
+  const [userName, setUserName] = useState('');
   const handleCreateRoom = () => {
     navigation.navigate('Create');
   };
 
   const handleJoinRoom = () => {
     navigation.navigate('Join');
+  };
+
+  const handleHostReconnection = (reconnectionData) => {
+    navigation.navigate('Room', {
+      roomId: reconnectionData.roomId,
+      roomName: reconnectionData.roomName,
+      userName: reconnectionData.userName,
+      isHost: true,
+      isLocalRoom: false,
+      numericRoomId: reconnectionData.numericRoomId
+    });
   };
 
   return (
@@ -56,6 +69,15 @@ const HomeScreen = ({ navigation }) => {
             onPress={handleJoinRoom}
             variant="secondary"
             style={styles.joinButton}
+          />
+        </View>
+
+        {/* Host Reconnection Option */}
+        <View style={styles.reconnectionSection}>
+          <Text style={styles.reconnectionTitle}>Already a Host?</Text>
+          <HostReconnection 
+            onReconnectSuccess={handleHostReconnection}
+            currentUser={userName || 'Host'}
           />
         </View>
 
@@ -139,6 +161,20 @@ const styles = StyleSheet.create({
     borderWidth: 2,
     borderColor: '#fff',
     paddingVertical: 14,
+  },
+  reconnectionSection: {
+    marginVertical: 20,
+    alignItems: 'center',
+    paddingVertical: 20,
+    borderTopWidth: 1,
+    borderTopColor: 'rgba(255, 255, 255, 0.2)',
+  },
+  reconnectionTitle: {
+    color: 'rgba(255, 255, 255, 0.9)',
+    fontSize: 16,
+    fontWeight: '600',
+    marginBottom: 12,
+    textAlign: 'center',
   },
   footer: {
     textAlign: 'center',

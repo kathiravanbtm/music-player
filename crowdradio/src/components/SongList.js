@@ -1,52 +1,73 @@
 import React from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, Alert } from 'react-native';
+import { View, Text, StyleSheet, FlatList } from 'react-native';
 import { AntDesign } from '@expo/vector-icons';
+import VotingSystem from './room/VotingSystem';
 
-const SongList = ({ songs, onVote, onRemove, userId, isHost, currentSongId }) => {
+const SongList = ({ 
+  songs, 
+  onVote, 
+  onRemove, 
+  userId, 
+  isHost, 
+  currentSongId, 
+  roomId, 
+  isLocalRoom = false,
+  ListHeaderComponent 
+}) => {
   if (!songs || songs.length === 0) {
     return (
-      <View style={styles.emptyContainer}>
-        <Text style={styles.emptyText}>No songs in the queue yet. Add some music!</Text>
+      <View style={styles.container}>
+        {ListHeaderComponent && <ListHeaderComponent />}
+        <View style={styles.emptyContainer}>
+          <AntDesign name="playcircleo" size={48} color="#ccc" />
+          <Text style={styles.emptyText}>No songs in the queue yet</Text>
+          <Text style={styles.emptySubtext}>Add some music to get started!</Text>
+        </View>
       </View>
     );
   }
 
-  // Check if the user has already voted for a song
-  const hasUserVoted = (song) => song.voters?.includes(userId) || false;
+  // Sort songs by vote score with timestamp tiebreaker (priority ordering)
+  const sortedSongs = [...songs].sort((a, b) => {
+    // Currently playing song should stay at top if it exists
+    if (a.id === currentSongId) return -1;
+    if (b.id === currentSongId) return 1;
+    
+    // Sort by votes (higher first)
+    const voteScoreA = a.votes || 0;
+    const voteScoreB = b.votes || 0;
+    
+    if (voteScoreA !== voteScoreB) {
+      return voteScoreB - voteScoreA;
+    }
+    
+    // If votes are equal, sort by timestamp (earlier added songs get priority)
+    const timestampA = new Date(a.addedAt || 0).getTime();
+    const timestampB = new Date(b.addedAt || 0).getTime();
+    
+    return timestampA - timestampB;
+  });
 
-  // Handle voting logic
-  const handleVote = (songId, voteType) => {
-    if (isHost) {
-      Alert.alert('Voting Restricted', 'Hosts cannot vote on songs');
-      return;
-    }
-    if (songId === currentSongId) {
-      Alert.alert('Voting Restricted', 'Cannot vote on currently playing song');
-      return;
-    }
-    const song = songs.find(s => s.id === songId);
-    if (!song) return;
-    if (hasUserVoted(song)) {
-      Alert.alert('Already Voted', 'You can only vote once per song');
-      return;
-    }
-    onVote(songId, voteType, userId);
-  };
-
-  // Render each song item
-  const renderSongItem = (item, index) => {
+  const renderSongItem = ({ item, index }) => {
     const isPlaying = item.id === currentSongId;
-    const userHasVoted = hasUserVoted(item);
+    
     return (
-      <View key={item.id} style={[
+      <View style={[
         styles.songItem,
         isPlaying && styles.currentlyPlaying
       ]}>
         <View style={styles.songInfo}>
-          <Text style={styles.position}>#{index + 1}</Text>
+          <View style={styles.positionContainer}>
+            <Text style={styles.position}>#{index + 1}</Text>
+            {isPlaying && (
+              <View style={styles.playingIndicator}>
+                <AntDesign name="sound" size={12} color="#4CAF50" />
+              </View>
+            )}
+          </View>
           <View style={styles.songDetails}>
             <Text style={styles.songTitle} numberOfLines={2}>
-              {isPlaying && '▶ '}{item.title}
+              {item.title}
             </Text>
             <Text style={styles.addedBy}>Added by: {item.addedBy}</Text>
             {isPlaying && (
@@ -54,160 +75,120 @@ const SongList = ({ songs, onVote, onRemove, userId, isHost, currentSongId }) =>
             )}
           </View>
         </View>
-        <View style={styles.songActions}>
-          {/* Voting buttons for non-host and not currently playing song */}
-          {!isPlaying && !isHost && (
-            <View style={styles.voteButtons}>
-              <TouchableOpacity
-                style={[
-                  styles.voteButton,
-                  userHasVoted && styles.votedButton
-                ]}
-                onPress={() => handleVote(item.id, 'up')}
-                disabled={userHasVoted}
-              >
-                <AntDesign 
-                  name="like2" 
-                  size={16} 
-                  color={userHasVoted ? '#aaa' : '#3498db'} 
-                />
-              </TouchableOpacity>
-              <Text style={[
-                styles.voteCount,
-                item.votes < 0 && styles.negativeVotes
-              ]}>
-                {item.votes || 0}
-              </Text>
-              <TouchableOpacity
-                style={[
-                  styles.voteButton,
-                  userHasVoted && styles.votedButton
-                ]}
-                onPress={() => handleVote(item.id, 'down')}
-                disabled={userHasVoted}
-              >
-                <AntDesign 
-                  name="dislike2" 
-                  size={16} 
-                  color={userHasVoted ? '#aaa' : '#e74c3c'} 
-                />
-              </TouchableOpacity>
-            </View>
-          )}
-          {/* Remove button for host, not for currently playing song */}
-          {isHost && !isPlaying && onRemove && (
-            <TouchableOpacity
-              style={styles.removeButton}
-              onPress={() => onRemove(item.id)}
-            >
-              <AntDesign name="delete" size={16} color="#e74c3c" />
-            </TouchableOpacity>
-          )}
-        </View>
+        
+        <VotingSystem
+          song={item}
+          userId={userId}
+          roomId={roomId}
+          isHost={isHost}
+          isCurrentlyPlaying={isPlaying}
+          isLocalRoom={isLocalRoom}
+          onLocalVote={onVote}
+        />
       </View>
     );
   };
 
   return (
-    <View style={styles.container}>
-      {songs.map((item, index) => renderSongItem(item, index))}
-    </View>
+    <FlatList
+      data={sortedSongs}
+      renderItem={renderSongItem}
+      keyExtractor={(item) => item.id}
+      style={styles.container}
+      showsVerticalScrollIndicator={false}
+      contentContainerStyle={styles.contentContainer}
+      ListHeaderComponent={ListHeaderComponent}
+      keyboardShouldPersistTaps="handled"
+    />
   );
 };
 
 const styles = StyleSheet.create({
   container: {
     flex: 1,
+    backgroundColor: '#667eea',
+  },
+  contentContainer: {
+    paddingVertical: 8,
+    paddingBottom: 100, // Increased padding for navigation safety
   },
   emptyContainer: {
-    padding: 20,
+    flex: 1,
+    justifyContent: 'center',
     alignItems: 'center',
+    padding: 40,
+    backgroundColor: '#667eea',
   },
   emptyText: {
     color: '#fff',
-    fontSize: 16,
+    fontSize: 18,
+    fontWeight: '600',
+    marginTop: 16,
     textAlign: 'center',
-    opacity: 0.7,
+  },
+  emptySubtext: {
+    color: 'rgba(255, 255, 255, 0.7)',
+    fontSize: 14,
+    marginTop: 8,
+    textAlign: 'center',
   },
   songItem: {
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'space-between',
     backgroundColor: 'rgba(255, 255, 255, 0.1)',
-    padding: 12,
-    marginBottom: 8,
-    borderRadius: 8,
+    padding: 16,
+    marginVertical: 4,
+    marginHorizontal: 8,
+    borderRadius: 12,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 4,
+    elevation: 2,
   },
   currentlyPlaying: {
-    backgroundColor: 'rgba(52, 152, 219, 0.2)',
+    backgroundColor: 'rgba(76, 175, 80, 0.15)',
     borderLeftWidth: 4,
-    borderLeftColor: '#3498db',
+    borderLeftColor: '#4CAF50',
   },
   songInfo: {
     flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
   },
+  positionContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginRight: 12,
+    minWidth: 40,
+  },
   position: {
-    width: 30,
-    color: '#fff',
-    opacity: 0.7,
+    color: 'rgba(255, 255, 255, 0.8)',
     fontSize: 14,
+    fontWeight: '600',
+  },
+  playingIndicator: {
+    marginLeft: 4,
   },
   songDetails: {
     flex: 1,
-    marginRight: 10,
   },
   songTitle: {
     color: '#fff',
     fontSize: 16,
+    fontWeight: '500',
     marginBottom: 4,
+    lineHeight: 20,
   },
   addedBy: {
-    color: '#fff',
-    opacity: 0.7,
+    color: 'rgba(255, 255, 255, 0.7)',
     fontSize: 12,
+    marginBottom: 2,
   },
   nowPlaying: {
-    color: '#3498db',
+    color: '#4CAF50',
     fontSize: 12,
     fontWeight: 'bold',
-    marginTop: 4,
-  },
-  songActions: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-  },
-  voteButtons: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: 'rgba(0, 0, 0, 0.2)',
-    borderRadius: 16,
-    padding: 4,
-  },
-  voteButton: {
-    padding: 8,
-    borderRadius: 16,
-  },
-  votedButton: {
-    opacity: 0.5,
-  },
-  voteCount: {
-    color: '#fff',
-    fontSize: 14,
-    fontWeight: 'bold',
-    marginHorizontal: 8,
-    minWidth: 24,
-    textAlign: 'center',
-  },
-  negativeVotes: {
-    color: '#e74c3c',
-  },
-  removeButton: {
-    padding: 8,
-    borderRadius: 16,
-    backgroundColor: 'rgba(231, 76, 60, 0.2)',
   },
 });
 

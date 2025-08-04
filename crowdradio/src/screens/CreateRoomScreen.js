@@ -7,11 +7,11 @@ import roomService from '../services/roomService';
 const CreateRoomScreen = ({ navigation }) => {
   const [isLoading, setIsLoading] = useState(false);
 
-  const handleCreateRoom = async (roomName, userName) => {
+  const handleCreateRoom = async (roomName, userName, hostPassword) => {
     setIsLoading(true);
     
     try {
-      const result = await roomService.createRoom(roomName, userName);
+      const result = await roomService.createRoom(roomName, userName, hostPassword);
       
       // Navigate to the room screen
       navigation.navigate('Room', { 
